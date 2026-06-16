@@ -48,7 +48,7 @@ DATA_DIR        = os.environ.get("E2REC_DATA_DIR", "/data")
 CONFIG_FILE     = f"{DATA_DIR}/config.json"
 
 # ── Version ────────────────────────────────────────────────────────────────
-VERSION = "1.2.0+de20cb29"   # Movie/Series Auswahl, Pre/Post-Offsets, Back-to-Back, Channel-Fix
+VERSION = "1.4.1+807e355d"   # i18n-Feinschliff: Sprachauswahl in Einstellungen, Hilfe als integrierter Tab
 SERIES_FILE     = f"{DATA_DIR}/series.json"
 RECORDINGS_FILE = f"{DATA_DIR}/recordings.json"
 HISTORY_FILE    = f"{DATA_DIR}/tuner_history.json"
@@ -739,7 +739,10 @@ _scan_status    = {"running": False, "last_run": None, "found": 0, "scheduled": 
 _last_scan      = 0.0
 
 def _event_key(channel_ref, start_ts):
-    return f"{channel_ref}@{int(start_ts)}"
+    # Ref normalisieren, damit Doppelpunkt- und Underscore-Format denselben Key
+    # ergeben (Serie speichert oft '1:0:...', EPG liefert '1_0_...').
+    ref = (channel_ref or "").rstrip("/").rstrip(":").rstrip("_").replace(":", "_")
+    return f"{ref}@{int(start_ts)}"
 
 def _safe_filename(title, start_ts):
     dt = datetime.fromtimestamp(start_ts)
@@ -1417,6 +1420,17 @@ nav button{background:none;border:none;color:var(--muted);padding:7px 14px;curso
 nav button:hover,nav button.active{color:var(--text);border-bottom-color:var(--accent2)}
 .container{padding:20px 24px;max-width:1400px;margin:0 auto}
 .tab{display:none}.tab.active{display:block}
+#tab-help .help-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+#tab-help .help-grid-full{grid-column:1/-1}
+#tab-help p{font-size:.82rem;line-height:1.7;color:var(--muted)}
+#tab-help p strong{color:var(--text)}
+#tab-help code{font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--accent2);background:rgba(99,102,241,.08);padding:1px 5px;border-radius:3px}
+#tab-help .version-badge{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:700;color:var(--accent2);background:rgba(99,102,241,.12);border:1px solid rgba(99,102,241,.3);padding:3px 10px;border-radius:4px;margin-bottom:16px}
+#tab-help .cl-entry{padding:10px 0;border-bottom:1px solid var(--border)}
+#tab-help .cl-entry:last-child{border-bottom:none}
+#tab-help .cl-current{border-left:3px solid var(--accent);padding-left:14px}
+#tab-help .cl-old{border-left:3px solid var(--border);padding-left:14px}
+@media(max-width:700px){#tab-help .help-grid{grid-template-columns:1fr}}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:18px 20px;margin-bottom:14px}
 .card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
 .card-title{font-size:.9rem;font-weight:600;font-family:'JetBrains Mono',monospace;color:var(--accent2)}
@@ -1574,6 +1588,7 @@ function switchTab(name, btn) {
   btn.classList.add('active');
   if (name === 'plan' || name === 'overview') loadPlan();
   if (name === 'series')     loadSeries();
+  if (name === 'movies')     loadSeries();
   if (name === 'recordings') loadRecordings();
   // proxies now in settings
   if (name === 'settings')   { loadConfig(); setTimeout(loadLogs, 300); setTimeout(loadTunerHistory, 400); }
@@ -1589,8 +1604,8 @@ async function loadStatus() {
     const hdr = document.getElementById('proxy-status-header');
     const proxyCount = (d.proxies_online||0);
     if (hdr) hdr.textContent = proxyCount > 0
-      ? proxyCount + ' Proxy verbunden'
-      : 'kein proxy — settings';
+      ? t('hdr.proxy_connected', {n: proxyCount})
+      : t('hdr.no_proxy');
   } catch(e) {}
 }
 
@@ -1622,7 +1637,7 @@ function buildDayTabs(lookahead) {
   const days = [];
   for (let d = 0; d < Math.ceil(lookahead / 24); d++) {
     const dt = new Date(now); dt.setDate(dt.getDate() + d);
-    days.push(dt.toLocaleDateString('de', {weekday:'short', day:'2-digit', month:'2-digit'}));
+    days.push(dt.toLocaleDateString(LC(), {weekday:'short', day:'2-digit', month:'2-digit'}));
   }
   if (_activePlanDay >= days.length) _activePlanDay = 0;
   tabs.innerHTML = days.map((d,i) =>
@@ -1650,7 +1665,7 @@ function renderTimeHeader(winStart, winEnd) {
   let t = Math.ceil(winStart / 3600) * 3600;
   while (t <= winEnd) {
     const px = ((t - winStart) / 60) * PX_PER_MIN + 140;
-    const label = new Date(t * 1000).toLocaleTimeString('de', {hour:'2-digit', minute:'2-digit'});
+    const label = new Date(t * 1000).toLocaleTimeString(LC(), {hour:'2-digit', minute:'2-digit'});
     inner += `<div style="position:absolute;left:${px}px;transform:translateX(-50%);font-size:10px;color:var(--muted);white-space:nowrap;line-height:24px">${label}</div>`;
     inner += `<div style="position:absolute;left:${px}px;top:0;bottom:0;width:1px;background:var(--border);opacity:.4"></div>`;
     t += 3600;
@@ -1662,7 +1677,7 @@ function renderTimeHeader(winStart, winEnd) {
 function renderPlan() {
   const grid = document.getElementById('plan-grid');
   if (!_scheduleData.length) {
-    grid.innerHTML = '<div class="empty">Keine EPG-Daten — EPG-Scan klicken</div>';
+    grid.innerHTML = '<div class="empty">' + t('plan.empty_noepg') + '</div>';
     return;
   }
   const lookahead = +document.getElementById('plan-hours').value;
@@ -1710,7 +1725,7 @@ function renderPlan() {
     slots += '</div>';
     rows += `<div class="plan-ch-row">${label}<div class="plan-ch-events">${slots}</div></div>`;
   }
-  grid.innerHTML = rows || '<div class="empty">Keine Sendungen im Zeitfenster</div>';
+  grid.innerHTML = rows || '<div class="empty">' + t('plan.empty_window') + '</div>';
   if (_activePlanDay === 0 && nowPx > 200) {
     const wrap = document.getElementById('plan-scroll-wrap');
     if (wrap) setTimeout(() => wrap.scrollLeft = nowPx - 200, 50);
@@ -1720,18 +1735,18 @@ function renderPlan() {
 function showTooltip(evt, el) {
   const ev = JSON.parse(decodeURIComponent(atob(el.dataset.ev)));
   const tt = document.getElementById('epg-tooltip');
-  const s = new Date(ev.start*1000).toLocaleTimeString('de',{hour:'2-digit',minute:'2-digit'});
-  const e = new Date(ev.stop*1000).toLocaleTimeString('de',{hour:'2-digit',minute:'2-digit'});
+  const s = new Date(ev.start*1000).toLocaleTimeString(LC(),{hour:'2-digit',minute:'2-digit'});
+  const e = new Date(ev.stop*1000).toLocaleTimeString(LC(),{hour:'2-digit',minute:'2-digit'});
   const dur = Math.round((ev.stop-ev.start)/60);
   const now = Date.now()/1000;
   const future = ev.stop > now;
   tt.innerHTML = `
-    <div class="tt-title">${escHtml(ev.title)||'(kein Titel)'}</div>
+    <div class="tt-title">${escHtml(ev.title)||t('tt.no_title')}</div>
     <div class="tt-time">${s} – ${e} (${dur} min)</div>
     ${ev.subtitle?`<div class="tt-sub">${escHtml(ev.subtitle)}</div>`:''}
-    ${ev.desc?`<div class="tt-desc">${escHtml(ev.desc)}</div>`:'<div class="tt-desc" style="font-style:italic">Keine Beschreibung verfügbar</div>'}
-    ${ev.matched ? `<div class="tt-rec">&#11044; wird aufgenommen (${escHtml(ev.serie_name)})</div>` : ''}
-    ${!ev.matched && ev.stop > Date.now()/1000 ? '<div style="color:var(--muted);font-size:.72rem;margin-top:4px">Klicken zum Aufnehmen</div>' : ''}
+    ${ev.desc?`<div class="tt-desc">${escHtml(ev.desc)}</div>`:`<div class="tt-desc" style="font-style:italic">${t('tt.no_desc')}</div>`}
+    ${ev.matched ? `<div class="tt-rec">&#11044; ${t('tt.recording',{n:escHtml(ev.serie_name)})}</div>` : ''}
+    ${!ev.matched && ev.stop > Date.now()/1000 ? `<div style="color:var(--muted);font-size:.72rem;margin-top:4px">${t('tt.click_record')}</div>` : ''}
   `;
   // Auslassen-Button separat unter dem Inhalt — immer sichtbar
   if (ev.matched && ev.rec_id) {
@@ -1739,23 +1754,28 @@ function showTooltip(evt, el) {
       <button onclick="skipRecording('${ev.rec_id}',event)"
         style="width:100%;background:rgba(218,54,51,.15);color:var(--red);border:1px solid var(--red);
                border-radius:4px;padding:4px 8px;font-size:.75rem;cursor:pointer">
-        &#10005; Diese Folge auslassen
+        &#10005; ${t('tt.skip')}
       </button>
     </div>`;
   }
-  // Tooltip 8px über dem EPG-Slot positionieren (damit Maus rüberfahren kann)
+  // Tooltip am EPG-Slot positionieren (damit Maus rüberfahren kann)
   const slotRect = el.getBoundingClientRect();
   const ttWidth = 290;
   const left = Math.min(evt.clientX, window.innerWidth - ttWidth - 10);
-  // Tooltip über oder unter dem Slot — je nach verfügbarem Platz
-  const ttHeight = 160; // geschätzt
+  // Erst sichtbar (unsichtbar) rendern, um die echte Höhe zu messen
+  tt.style.left = left + 'px';
+  tt.style.visibility = 'hidden';
+  tt.style.display = 'block';
+  const ttHeight = tt.offsetHeight;
   const spaceAbove = slotRect.top;
-  const top = spaceAbove > ttHeight + 10
+  let top = spaceAbove > ttHeight + 10
     ? slotRect.top - ttHeight - 8   // über dem Slot
     : slotRect.bottom + 8;           // unter dem Slot
-  tt.style.left = left + 'px';
-  tt.style.top  = top + 'px';
-  tt.style.display = 'block';
+  // In den Viewport zwingen — Button bleibt immer sichtbar
+  if (top + ttHeight > window.innerHeight - 10) top = window.innerHeight - ttHeight - 10;
+  if (top < 10) top = 10;
+  tt.style.top = top + 'px';
+  tt.style.visibility = 'visible';
   // Tooltip offen halten wenn Maus drüber fährt
   tt.onmouseleave = () => tt.style.display = 'none';
 }
@@ -1781,7 +1801,7 @@ function quickRecordFromEl(el) {
 }
 
 async function triggerScan(btn) {
-  if (btn) { btn.innerHTML = '&#9203; Laedt...'; btn.disabled = true; }
+  if (btn) { btn.innerHTML = '&#9203; ' + t('plan.loading'); btn.disabled = true; }
   await fetch('/api/scan', {method:'POST'});
   for (let i = 0; i < 15; i++) {
     await new Promise(r => setTimeout(r, 2000));
@@ -1789,16 +1809,17 @@ async function triggerScan(btn) {
     if (!s.scan_status?.running) break;
   }
   await loadPlan();
-  if (btn) { btn.innerHTML = '&#8635; EPG-Scan'; btn.disabled = false; }
+  if (btn) { btn.innerHTML = '&#8635; ' + t('plan.scan'); btn.disabled = false; }
 }
 
 async function quickRecord(ev, chName, chRef) {
-  const startStr = new Date(ev.start*1000).toLocaleString('de',{weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-  const stopStr  = new Date(ev.stop*1000).toLocaleTimeString('de',{hour:'2-digit',minute:'2-digit'});
+  const startStr = new Date(ev.start*1000).toLocaleString(LC(),{weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+  const stopStr  = new Date(ev.stop*1000).toLocaleTimeString(LC(),{hour:'2-digit',minute:'2-digit'});
   const dur      = Math.round((ev.stop - ev.start) / 60);
   const titleWords = ev.title.split(/\\s+/);
   const shortTitle = titleWords.slice(0, Math.min(3, titleWords.length)).join(' ');
   const overlay = document.createElement('div');
+  overlay.id = 'qr-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:200;display:flex;align-items:center;justify-content:center';
   overlay.innerHTML = `
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px;max-width:520px;width:92%">
@@ -1810,17 +1831,17 @@ async function quickRecord(ev, chName, chRef) {
       <!-- Typ-Auswahl -->
       <div style="display:flex;gap:8px;margin-bottom:14px">
         <button id="qr-kind-movie" onclick="qrSetKind('movie')"
-          class="btn" style="flex:1;padding:10px">&#127909; Film</button>
+          class="btn" style="flex:1;padding:10px">&#127909; ${t('qr.movie')}</button>
         <button id="qr-kind-series" onclick="qrSetKind('series')"
-          class="btn" style="flex:1;padding:10px">&#128250; Serie</button>
+          class="btn" style="flex:1;padding:10px">&#128250; ${t('qr.series')}</button>
       </div>
 
       <!-- Film-Optionen (anfangs versteckt) -->
       <div id="qr-movie-box" style="display:none;border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:10px;background:var(--surface2)">
         <button onclick="confirmQuickRecord('${escAttr(ev.title)}','${escAttr(chName)}','${escAttr(chRef)}',${ev.start},${ev.stop},'${escAttr(ev.subtitle||'')}','movie','once')"
-          class="btn btn-primary" style="width:100%;font-size:.9rem;padding:10px">&#11044; Film aufnehmen</button>
+          class="btn btn-primary" style="width:100%;font-size:.9rem;padding:10px">&#11044; ${t('qr.rec_movie')}</button>
         <div style="font-size:.7rem;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:6px;text-align:center">
-          Wird als Film in Plex Movies-Library importiert
+          ${t('qr.movie_note')}
         </div>
       </div>
 
@@ -1828,27 +1849,27 @@ async function quickRecord(ev, chName, chRef) {
       <div id="qr-series-box" style="display:none">
         <div style="border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:10px;background:var(--surface2)">
           <button onclick="confirmQuickRecord('${escAttr(ev.title)}','${escAttr(chName)}','${escAttr(chRef)}',${ev.start},${ev.stop},'${escAttr(ev.subtitle||'')}','series','once')"
-            class="btn btn-primary" style="width:100%;font-size:.9rem;padding:10px">&#11044; Nur diese Folge</button>
+            class="btn btn-primary" style="width:100%;font-size:.9rem;padding:10px">&#11044; ${t('qr.this_episode')}</button>
           <div style="font-size:.7rem;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:6px;text-align:center">
-            Einmalige Aufnahme dieser einen Folge
+            ${t('qr.once_note')}
           </div>
         </div>
         <div style="border:1px solid var(--border);border-radius:6px;padding:12px;background:var(--surface2)">
-          <div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--muted);margin-bottom:8px">&#8635; ALLE FOLGEN — auch zukünftige</div>
-          <label style="font-size:.7rem;color:var(--muted);font-family:'JetBrains Mono',monospace;display:block;margin-bottom:3px">Suchmuster (Regex)</label>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--muted);margin-bottom:8px">&#8635; ${t('qr.all_episodes')}</div>
+          <label style="font-size:.7rem;color:var(--muted);font-family:'JetBrains Mono',monospace;display:block;margin-bottom:3px">${t('qr.pattern')}</label>
           <input id="qr-regex" type="text" value="${escHtml(shortTitle)}"
             style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:6px 8px;font-size:.8rem;font-family:'JetBrains Mono',monospace;outline:none;margin-bottom:6px">
           <div style="font-size:.7rem;color:var(--muted);margin-bottom:8px">
-            Vollst. Titel: <code style="color:var(--accent2)">${escHtml(ev.title)}</code><br>
-            Kürzen für mehr Treffer: z.B. <code style="color:var(--accent2)">${escHtml(shortTitle)}</code>
+            ${t('qr.full_title')} <code style="color:var(--accent2)">${escHtml(ev.title)}</code><br>
+            ${t('qr.shorten')} <code style="color:var(--accent2)">${escHtml(shortTitle)}</code>
           </div>
           <button onclick="confirmQuickRecord('${escAttr(ev.title)}','${escAttr(chName)}','${escAttr(chRef)}',${ev.start},${ev.stop},'${escAttr(ev.subtitle||'')}','series','recurring')"
-            class="btn btn-primary" style="width:100%;background:var(--surface);border-color:var(--accent2);color:var(--accent2)">&#8635; Alle Folgen aufnehmen</button>
+            class="btn btn-primary" style="width:100%;background:var(--surface);border-color:var(--accent2);color:var(--accent2)">&#8635; ${t('qr.rec_all')}</button>
         </div>
       </div>
 
       <div style="display:flex;justify-content:flex-end;margin-top:10px">
-        <button onclick="this.closest('div[style*=fixed]').remove()" class="btn">Schliessen</button>
+        <button onclick="document.getElementById('qr-overlay')?.remove()" class="btn">${t('common.close')}</button>
       </div>
     </div>
   `;
@@ -1886,7 +1907,7 @@ async function confirmQuickRecord(title, chName, chRef, startTs, stopTs, subtitl
   const regex = isOnce
     ? title
     : (document.getElementById('qr-regex')?.value || title);
-  document.querySelector('div[style*="position:fixed"][style*="z-index:200"]')?.remove();
+  document.getElementById('qr-overlay')?.remove();
   const r = await fetch('/api/series/from-epg', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
@@ -1900,31 +1921,35 @@ async function confirmQuickRecord(title, chName, chRef, startTs, stopTs, subtitl
   const d = await r.json();
   if (d.ok) {
     const msg = d.duplicate
-      ? 'Bereits vorhanden — Aufnahme geplant'
+      ? t('toast.dup_planned')
       : (isOnce
-          ? (kind === 'movie' ? 'Film-Aufnahme geplant' : 'Einmalige Aufnahme geplant')
-          : 'Serie eingerichtet');
+          ? (kind === 'movie' ? t('toast.movie_planned') : t('toast.once_planned'))
+          : t('toast.series_created'));
     showToast(msg, d.duplicate ? '' : 'success');
     await loadPlan(); loadStatus();
   } else {
-    showToast('Fehler: '+(d.error||'?'), 'error');
+    showToast(t('toast.error',{n:(d.error||'?')}), 'error');
   }
 }
 
 // ── Serien ────────────────────────────────────────────────
 async function loadSeries() {
   const all = await fetch('/api/series').then(r => r.json());
-  const tbody = document.getElementById('series-tbody');
-  const filter = document.getElementById('series-kind-filter')?.value || 'all';
-  let series = all;
-  if (filter === 'movie')  series = all.filter(s => s.kind === 'movie');
-  if (filter === 'series') series = all.filter(s => (s.kind || 'series') === 'series');
-  if (!series.length) { tbody.innerHTML='<tr><td colspan="7" class="empty">Noch keine Einträge</td></tr>'; return; }
+  const movies = all.filter(s => s.kind === 'movie');
+  const series = all.filter(s => (s.kind || 'series') === 'series');
+  renderSeriesTable(series, 'series-tbody');
+  renderSeriesTable(movies, 'movies-tbody');
+}
+
+function renderSeriesTable(series, tbodyId) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  if (!series.length) { tbody.innerHTML='<tr><td colspan="7" class="empty">' + t('table.empty') + '</td></tr>'; return; }
   tbody.innerHTML = series.map(s => {
     const isMovie = s.kind === 'movie';
     const kindBadge = isMovie
-      ? '<span class="badge" style="background:rgba(245,158,11,.15);color:var(--yellow)">&#127909; Film</span>'
-      : '<span class="badge" style="background:rgba(99,102,241,.15);color:var(--accent2)">&#128250; Serie</span>';
+      ? `<span class="badge" style="background:rgba(245,158,11,.15);color:var(--yellow)">&#127909; ${t('badge.movie')}</span>`
+      : `<span class="badge" style="background:rgba(99,102,241,.15);color:var(--accent2)">&#128250; ${t('badge.series')}</span>`;
     const offsetInfo = (s.pre_offset_sec || s.post_offset_sec)
       ? `<div style="font-size:.68rem;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:2px">${s.pre_offset_sec>0?'+':''}${s.pre_offset_sec||0}s / ${s.post_offset_sec>0?'+':''}${s.post_offset_sec||0}s</div>`
       : '';
@@ -1933,25 +1958,25 @@ async function loadSeries() {
     <td>${kindBadge}</td>
     <td>${escHtml(s.channel_name)}</td>
     <td style="font-family:monospace;font-size:.8rem;color:var(--blue)">${escHtml(s.regex_pattern||'')}</td>
-    <td>${s.keep_last===0?'<span style="color:var(--muted)">alle</span>':s.keep_last}</td>
+    <td>${s.keep_last===0?`<span style="color:var(--muted)">${t('common.all')}</span>`:s.keep_last}</td>
     <td>${s.once
       ? (s.enabled
-          ? '<span class="badge" style="background:rgba(99,102,241,.15);color:var(--accent2)">Einmalig</span>'
-          : '<span class="badge" style="background:rgba(139,148,158,.1);color:var(--muted)">Einmalig &#10003;</span>')
+          ? `<span class="badge" style="background:rgba(99,102,241,.15);color:var(--accent2)">${t('badge.once')}</span>`
+          : `<span class="badge" style="background:rgba(139,148,158,.1);color:var(--muted)">${t('badge.once')} &#10003;</span>`)
       : (s.enabled
-          ? '<span class="badge badge-done">Aktiv</span>'
-          : '<span class="badge" style="background:rgba(139,148,158,.1);color:var(--muted)">Inaktiv</span>')
+          ? `<span class="badge badge-done">${t('badge.active')}</span>`
+          : `<span class="badge" style="background:rgba(139,148,158,.1);color:var(--muted)">${t('badge.inactive')}</span>`)
     }</td>
     <td>
-      <button class="btn btn-sm" onclick='openEditModal(${JSON.stringify(s)})' title="Bearbeiten">&#9998;</button>
-      <button class="btn btn-sm btn-danger" onclick="deleteSerie('${s.id}','${escAttr(s.name)}')" title="Entfernen">&#128465;</button>
+      <button class="btn btn-sm" onclick='openEditModal(${JSON.stringify(s)})' title="${t('common.edit')}">&#9998;</button>
+      <button class="btn btn-sm btn-danger" onclick="deleteSerie('${s.id}','${escAttr(s.name)}')" title="${t('common.remove')}">&#128465;</button>
     </td>
   </tr>`;
   }).join('');
 }
 
 async function deleteSerie(id, name) {
-  if (!confirm(`Serie "${name}" entfernen? Bereits aufgenommene Dateien bleiben erhalten.`)) return;
+  if (!confirm(t('confirm.delete_series',{n:name}))) return;
   await fetch('/api/series/'+id, {method:'DELETE'});
   loadSeries(); loadStatus();
 }
@@ -1974,7 +1999,7 @@ async function loadRecordings() {
     }
   });
   const tbody = document.getElementById('rec-tbody');
-  if (!recs.length) { tbody.innerHTML='<tr><td colspan="7" class="empty">Keine Aufnahmen</td></tr>'; return; }
+  if (!recs.length) { tbody.innerHTML='<tr><td colspan="7" class="empty">' + t('rec.empty') + '</td></tr>'; return; }
   const now = Date.now() / 1000;
   tbody.innerHTML = recs.map(rec => {
     const startStr = fmtTs(rec.start_ts);
@@ -1990,23 +2015,23 @@ async function loadRecordings() {
       const remMin  = Math.ceil(remaining / 60);
       progressHtml = `
         <div class="rec-progress"><div class="rec-progress-bar" style="width:${pct}%"></div></div>
-        <div style="font-size:.72rem;color:var(--muted);margin-top:2px">noch ~${remMin} min</div>`;
+        <div style="font-size:.72rem;color:var(--muted);margin-top:2px">${t('rec.remaining',{n:remMin})}</div>`;
     }
     const prot = rec.protected
-      ? `<button class="btn btn-sm" onclick="toggleProtect('${rec.id}',false)" title="Schutz aufheben">&#128274;</button>`
-      : `<button class="btn btn-sm" onclick="toggleProtect('${rec.id}',true)" title="Schuetzen">&#128275;</button>`;
+      ? `<button class="btn btn-sm" onclick="toggleProtect('${rec.id}',false)" title="${t('rec.unprotect_title')}">&#128274;</button>`
+      : `<button class="btn btn-sm" onclick="toggleProtect('${rec.id}',true)" title="${t('rec.protect_title')}">&#128275;</button>`;
     return `<tr>
       <td>${escHtml(rec.serie_name||'')}</td>
-      <td>${escHtml(rec.title)}${rec.protected?' &#128274;':''}${rec.file_missing?' <span style="color:var(--red);font-size:.72rem" title="Datei nicht gefunden">&#9888;</span>':''}${rec.subtitle?'<br><span style="color:var(--muted);font-size:.8rem">'+escHtml(rec.subtitle)+'</span>':''}</td>
+      <td>${escHtml(rec.title)}${rec.protected?' &#128274;':''}${rec.file_missing?` <span style="color:var(--red);font-size:.72rem" title="${t('rec.file_missing_title')}">&#9888;</span>`:''}${rec.subtitle?'<br><span style="color:var(--muted);font-size:.8rem">'+escHtml(rec.subtitle)+'</span>':''}</td>
       <td style="font-size:.82rem">${startStr}</td>
       <td style="font-size:.82rem">${endStr}${progressHtml}</td>
       <td style="font-size:.78rem;color:var(--muted)">${rec.filesize ? (rec.filesize/1024/1024).toFixed(1)+' MB' : ''}</td>
       <td style="font-size:.82rem;color:var(--muted)">${rec.proxy_url ? rec.proxy_url.replace('http://','') : '—'}</td>
       <td>${statusBadge(rec.status)}</td>
       <td>
-        <button class="btn btn-sm" onclick="showRecordingDetail('${rec.id}')" title="Informationen" style="font-family:'JetBrains Mono',monospace;font-weight:700">i</button>
+        <button class="btn btn-sm" onclick="showRecordingDetail('${rec.id}')" title="${t('rec.info_title')}" style="font-family:'JetBrains Mono',monospace;font-weight:700">i</button>
         ${prot}
-        <button class="btn btn-sm btn-danger" onclick="deleteRec('${rec.id}')" title="Eintrag loeschen (Datei bleibt erhalten)">&#128465;</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteRec('${rec.id}')" title="${t('rec.delete_title')}">&#128465;</button>
       </td>
     </tr>`;
   }).join('');
@@ -2019,7 +2044,7 @@ async function playRecording(id) {
   // Wir öffnen den e2proxy Stream-URL im Browser (webm-Profil für Browser-Kompatibilität)
   const proxyUrl = rec.proxy_url;
   const fp = rec.filepath || '';
-  if (!proxyUrl || !fp) { showToast('Kein Stream verfuegbar', 'error'); return; }
+  if (!proxyUrl || !fp) { showToast(t('toast.no_stream'), 'error'); return; }
   // Mini-Player Modal
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:300;display:flex;flex-direction:column;align-items:center;justify-content:center';
@@ -2028,14 +2053,14 @@ async function playRecording(id) {
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border)">
         <span style="font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--accent2)">${escHtml(rec.title)}</span>
         <div style="display:flex;gap:8px">
-          <button onclick="document.getElementById('rec-player').requestFullscreen()" class="btn btn-sm">&#10138; Vollbild</button>
-          <button onclick="this.closest('div[style*=fixed]').remove()" class="btn btn-sm btn-danger">&#10005; Schliessen</button>
+          <button onclick="document.getElementById('rec-player').requestFullscreen()" class="btn btn-sm">&#10138; ${t('player.fullscreen')}</button>
+          <button onclick="this.closest('div[style*=fixed]').remove()" class="btn btn-sm btn-danger">&#10005; ${t('common.close')}</button>
         </div>
       </div>
       <video id="rec-player" controls autoplay playsinline
         style="width:100%;max-height:70vh;background:#000;display:block"
         src="${proxyUrl}/recording/stream?file=${encodeURIComponent(fp)}">
-        Ihr Browser unterstuetzt kein Video.
+        ${t('player.no_video')}
       </video>
       <div style="padding:8px 16px;font-size:.75rem;color:var(--muted);font-family:'JetBrains Mono',monospace">
         ${escHtml(fp)}
@@ -2050,18 +2075,18 @@ async function playRecording(id) {
 
 async function copyStreamUrl(id) {
   const rec = await fetch('/api/recordings').then(r=>r.json()).then(recs=>recs.find(r=>r.id===id));
-  if (!rec || !rec.proxy_url || !rec.filepath) { showToast('Keine URL verfuegbar', 'error'); return; }
+  if (!rec || !rec.proxy_url || !rec.filepath) { showToast(t('toast.no_url'), 'error'); return; }
   const url = rec.proxy_url + '/recording/stream?file=' + encodeURIComponent(rec.filepath);
   try {
     await navigator.clipboard.writeText(url);
-    showToast('URL kopiert', 'success');
+    showToast(t('toast.url_copied'), 'success');
   } catch(e) {
     prompt('Stream-URL:', url);
   }
 }
 
 async function clearFailedRecs() {
-  if (!confirm('Alle Fehler-Eintraege aus der Liste entfernen? Aufgenommene Dateien bleiben erhalten.')) return;
+  if (!confirm(t('confirm.clear_failed'))) return;
   const recs = await fetch('/api/recordings').then(r => r.json());
   const toDelete = recs.filter(r =>
     r.status === 'failed' ||
@@ -2073,19 +2098,19 @@ async function clearFailedRecs() {
   for (const rec of toDelete) {
     await fetch('/api/recordings/' + rec.id, {method: 'DELETE'});
   }
-  showToast(toDelete.length + ' Eintraege geloescht', 'success');
+  showToast(t('toast.entries_deleted',{n:toDelete.length}), 'success');
   loadRecordings();
 }
 
 async function rescueScan() {
   const btn = event?.target;
-  if (btn) { btn.innerHTML = '&#128269; Scanne...'; btn.disabled = true; }
+  if (btn) { btn.innerHTML = '&#128269; ' + t('rec.scanning'); btn.disabled = true; }
   const r = await fetch('/api/admin/rescan', {method:'POST', headers:{'Content-Type':'application/json'}}).then(r => r.json());
   // Warte kurz damit der Hintergrund-Thread fertig ist
   await new Promise(res => setTimeout(res, 2000));
   await loadRecordings();
-  showToast('Rescan: ' + (r.msg || 'OK'), 'success');
-  if (btn) { btn.innerHTML = '&#128269; Rescan'; btn.disabled = false; }
+  showToast(t('toast.rescan',{n:(r.msg || 'OK')}), 'success');
+  if (btn) { btn.innerHTML = '&#128269; ' + t('rec.rescan'); btn.disabled = false; }
 }
 
 function infoRow(label, value) {
@@ -2097,13 +2122,13 @@ function infoRow(label, value) {
 
 async function showRecordingDetail(id) {
   const detail = await fetch('/api/recordings/' + id + '/detail').then(r => r.json());
-  if (detail.error) { showToast('Fehler: ' + detail.error, 'error'); return; }
+  if (detail.error) { showToast(t('toast.error',{n:detail.error}), 'error'); return; }
   const fp      = detail.filepath || '';
   const exists  = detail.file_exists;
   const streamUrl = detail.stream_url || '';
   const mb      = detail.filesize ? (detail.filesize/1024/1024).toFixed(1) + ' MB' : '—';
-  const startStr = detail.start_ts ? new Date(detail.start_ts*1000).toLocaleString('de') : '—';
-  const endStr   = detail.stop_ts  ? new Date(detail.stop_ts*1000).toLocaleString('de')  : '—';
+  const startStr = detail.start_ts ? new Date(detail.start_ts*1000).toLocaleString(LC()) : '—';
+  const endStr   = detail.stop_ts  ? new Date(detail.stop_ts*1000).toLocaleString(LC())  : '—';
   const source   = detail.source   || 'epg-scheduler';
   const receiver = detail.receiver || '—';
   const statusColors = {done:'var(--green)',failed:'var(--red)',missed:'var(--yellow)',recording:'var(--accent2)',scheduled:'var(--blue)'};
@@ -2121,25 +2146,25 @@ async function showRecordingDetail(id) {
         <button onclick="this.closest('div[style*=fixed]').remove()" class="btn btn-sm">&#10005;</button>
       </div>
       <div style="padding:14px 18px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        ${infoRow('Status', `<span style="color:${statusColor};font-weight:600">${escHtml(detail.status||'')}</span>`)}
-        ${infoRow('Quelle', escHtml(source))}
-        ${infoRow('Start', escHtml(startStr))}
-        ${infoRow('Ende', escHtml(endStr))}
-        ${infoRow('Sender', escHtml(detail.channel_name||'—'))}
-        ${infoRow('Proxy', escHtml((detail.proxy_url||'—').replace(/https?:\/\//, '')))}
-        ${infoRow('Tuner', escHtml(receiver) + (detail.shared_tuner ? ' <span style="color:var(--yellow);font-size:.72rem">(shared)</span>' : ''))}
-        ${infoRow('Dateigröße', mb)}
-        ${infoRow('Datei', exists ? '<span style="color:var(--green)">&#10003; vorhanden</span>' : '<span style="color:var(--red)">&#10005; fehlt</span>')}
+        ${infoRow(t('detail.status'), `<span style="color:${statusColor};font-weight:600">${escHtml(detail.status||'')}</span>`)}
+        ${infoRow(t('detail.source'), escHtml(source))}
+        ${infoRow(t('detail.start'), escHtml(startStr))}
+        ${infoRow(t('detail.end'), escHtml(endStr))}
+        ${infoRow(t('detail.channel'), escHtml(detail.channel_name||'—'))}
+        ${infoRow(t('detail.proxy'), escHtml((detail.proxy_url||'—').replace(/https?:\/\//, '')))}
+        ${infoRow(t('detail.tuner'), escHtml(receiver) + (detail.shared_tuner ? ` <span style="color:var(--yellow);font-size:.72rem">(${t('detail.shared')})</span>` : ''))}
+        ${infoRow(t('detail.filesize'), mb)}
+        ${infoRow(t('detail.file'), exists ? `<span style="color:var(--green)">&#10003; ${t('detail.exists')}</span>` : `<span style="color:var(--red)">&#10005; ${t('detail.missing')}</span>`)}
       </div>
       <div style="padding:0 18px 14px">
-        <div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--muted);margin-bottom:4px">DATEIPFAD</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--muted);margin-bottom:4px">${t('detail.filepath')}</div>
         <div style="font-family:'JetBrains Mono',monospace;font-size:.73rem;color:${fp?'var(--text)':'var(--red)'};background:var(--bg);padding:8px 10px;border-radius:5px;border:1px solid var(--border);word-break:break-all">
-          ${fp ? escHtml(fp) : 'kein Pfad'}
+          ${fp ? escHtml(fp) : t('detail.no_path')}
         </div>
       </div>
       ${detail.desc ? `<div style="padding:0 18px 14px;font-size:.8rem;color:var(--muted);line-height:1.5">${escHtml(detail.desc)}</div>` : ''}
       <div style="padding:14px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end">
-        <button onclick="this.closest('div[style*=fixed]').remove()" class="btn">Schliessen</button>
+        <button onclick="this.closest('div[style*=fixed]').remove()" class="btn">${t('common.close')}</button>
       </div>
     </div>
   `;
@@ -2170,14 +2195,14 @@ function playFromDetail(streamUrl, title) {
 async function playRecording(id) { await showRecordingDetail(id); }
 
 async function copyUrl(url) {
-  try { await navigator.clipboard.writeText(url); showToast('URL kopiert', 'success'); }
+  try { await navigator.clipboard.writeText(url); showToast(t('toast.url_copied'), 'success'); }
   catch(e) { prompt('Stream-URL:', url); }
 }
 
 async function copyStreamUrl(id) {
   const detail = await fetch('/api/recordings/' + id + '/detail').then(r => r.json());
   if (detail.stream_url) copyUrl(detail.stream_url);
-  else showToast('Keine Stream-URL', 'error');
+  else showToast(t('toast.no_stream_url'), 'error');
 }
 
 async function toggleProtect(id, val) {
@@ -2185,7 +2210,7 @@ async function toggleProtect(id, val) {
   loadRecordings();
 }
 async function deleteRec(id) {
-  if (!confirm('Eintrag aus der Liste entfernen? Die aufgenommene Datei bleibt erhalten.')) return;
+  if (!confirm(t('confirm.delete_rec'))) return;
   await fetch('/api/recordings/'+id, {method:'DELETE'});
   loadRecordings(); loadStatus();
 }
@@ -2194,7 +2219,7 @@ async function deleteRec(id) {
 async function loadProxies() {
   const proxies = await fetch('/api/proxies').then(r => r.json());
   const el = document.getElementById('proxies-list');
-  if (!proxies.length) { el.innerHTML='<div class="empty">Keine Proxies — SSDP oder manuell hinzufuegen</div>'; return; }
+  if (!proxies.length) { el.innerHTML='<div class="empty">' + t('proxy.empty_cfg') + '</div>'; return; }
   el.innerHTML = proxies.map(p => `
     <div class="proxy-card ${p.online?'online':'offline'}">
       <div>
@@ -2205,12 +2230,12 @@ async function loadProxies() {
         <div class="proxy-url">${escHtml(p.url)}</div>
         ${p.online ? `
           <div class="tuner-bar">
-            ${p.receivers.map(r => `<div class="tuner-dot ${r.busy?'busy':'free'}" title="${escHtml(r.name)}: ${r.busy?'belegt ('+escHtml(r.channel)+')':'frei'}"></div>`).join('')}
-            <span style="font-size:.75rem;color:var(--muted);margin-left:6px">${p.free} frei / ${p.total} gesamt</span>
-          </div>` : '<div style="font-size:.75rem;color:var(--red);margin-top:4px">Nicht erreichbar</div>'}
+            ${p.receivers.map(r => `<div class="tuner-dot ${r.busy?'busy':'free'}" title="${escHtml(r.name)}: ${r.busy?t('proxy.busy',{n:escHtml(r.channel)}):t('proxy.free')}"></div>`).join('')}
+            <span style="font-size:.75rem;color:var(--muted);margin-left:6px">${t('proxy.free_total',{a:p.free,b:p.total})}</span>
+          </div>` : `<div style="font-size:.75rem;color:var(--red);margin-top:4px">${t('proxy.offline')}</div>`}
       </div>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-sm" onclick="toggleProxy('${escAttr(p.url)}', ${!p.enabled})">${p.enabled?'Deaktivieren':'Aktivieren'}</button>
+        <button class="btn btn-sm" onclick="toggleProxy('${escAttr(p.url)}', ${!p.enabled})">${p.enabled?t('proxy.disable'):t('proxy.enable')}</button>
         <button class="btn btn-sm btn-danger" onclick="removeProxy('${escAttr(p.url)}')">&#128465;</button>
       </div>
     </div>
@@ -2232,14 +2257,14 @@ async function toggleProxy(url, enabled) {
   loadProxies();
 }
 async function removeProxy(url) {
-  if (!confirm('Proxy aus der Liste entfernen?')) return;
+  if (!confirm(t('confirm.remove_proxy'))) return;
   await fetch('/api/proxies/remove', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url})});
   loadProxies();
 }
 async function runDiscovery() {
-  document.getElementById('discovery-btn').textContent = 'Suche...';
+  document.getElementById('discovery-btn').textContent = t('proxy.searching');
   await fetch('/api/discover', {method:'POST'});
-  setTimeout(() => { loadProxies(); document.getElementById('discovery-btn').textContent = 'SSDP-Discovery'; }, 6000);
+  setTimeout(() => { loadProxies(); document.getElementById('discovery-btn').textContent = t('proxy.ssdp_discovery'); }, 6000);
 }
 
 // ── Config ────────────────────────────────────────────────
@@ -2288,7 +2313,7 @@ async function loadSettingsProxies() {
   if (!el) return;
   const proxies = await fetch('/api/proxies').then(r => r.json());
   if (!proxies.length) {
-    el.innerHTML = '<div class="empty" style="padding:10px">Keine Proxies konfiguriert</div>';
+    el.innerHTML = '<div class="empty" style="padding:10px">' + t('proxy.empty_cfg') + '</div>';
     return;
   }
   el.innerHTML = proxies.map(p => `
@@ -2297,12 +2322,12 @@ async function loadSettingsProxies() {
         <div class="proxy-name">
           <span class="dot ${p.online?'dot-green':'dot-red'}" style="margin-right:5px"></span>
           ${escHtml(p.name)}
-          ${p.online ? `<span style="color:var(--muted);font-size:.7rem;margin-left:6px">${p.free}/${p.total} frei</span>` : ''}
+          ${p.online ? `<span style="color:var(--muted);font-size:.7rem;margin-left:6px">${t('proxy.free_short',{a:p.free,b:p.total})}</span>` : ''}
         </div>
         <div class="proxy-url">${escHtml(p.url)}</div>
       </div>
       <div style="display:flex;gap:6px">
-        <button class="btn btn-sm" onclick="toggleProxy('${escAttr(p.url)}',${!p.enabled})">${p.enabled?'Aus':'Ein'}</button>
+        <button class="btn btn-sm" onclick="toggleProxy('${escAttr(p.url)}',${!p.enabled})">${p.enabled?t('proxy.off'):t('proxy.on')}</button>
         <button class="btn btn-sm btn-danger" onclick="removeProxySettings('${escAttr(p.url)}')">&#128465;</button>
       </div>
     </div>
@@ -2317,7 +2342,7 @@ async function addProxyFromSettings() {
   document.getElementById('settings-proxy-url').value = '';
   document.getElementById('settings-proxy-name').value = '';
   loadSettingsProxies();
-  showToast('Proxy hinzugefuegt', 'success');
+  showToast(t('toast.proxy_added'), 'success');
 }
 
 async function removeProxySettings(url) {
@@ -2344,30 +2369,30 @@ async function saveAllConfig() {
     tmdb_language:       document.getElementById('cfg-tmdb-lang').value,
   };
   await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-  showToast('Gespeichert', 'success');
+  showToast(t('toast.saved'), 'success');
 }
 async function loadTunerHistory() {
   const el = document.getElementById('tuner-history-container');
   if (!el) return;
   const history = await fetch('/api/tuner/history').then(r => r.json());
   if (!history.length) {
-    el.innerHTML = '<div class="empty" style="padding:16px">Noch keine Einträge</div>';
+    el.innerHTML = '<div class="empty" style="padding:16px">' + t('table.empty') + '</div>';
     return;
   }
   el.innerHTML = history.map(e => {
-    const ts = new Date(e.ts).toLocaleString('de', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const ts = new Date(e.ts).toLocaleString(LC(), {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
     const ok = e.chosen && !e.error;
     const color = ok ? 'var(--green)' : 'var(--red)';
     const icon  = ok ? '&#10003;' : '&#10005;';
     // Receiver-Details
     const recvDetails = (e.proxies||[]).map(p => {
-      if (!p.online) return `<span style="color:var(--red)">${escHtml(p.url)}: offline</span>`;
+      if (!p.online) return `<span style="color:var(--red)">${escHtml(p.url)}: ${t('proxy.offline_l')}</span>`;
       const recvs = (p.receivers||[]).map(r =>
         `${escHtml(r.name||r.id)}: ${r.busy
-          ? '<span style="color:var(--yellow)">belegt (' + escHtml(r.channel||'') + ')</span>'
-          : '<span style="color:var(--green)">frei</span>'}`
+          ? `<span style="color:var(--yellow)">${t('proxy.busy',{n:escHtml(r.channel||'')})}</span>`
+          : `<span style="color:var(--green)">${t('proxy.free')}</span>`}`
       ).join(', ');
-      return `${escHtml(p.url.replace(/https?:\/\//, ''))} [${p.free}/${p.total} frei${recvs ? ' — ' + recvs : ''}]`;
+      return `${escHtml(p.url.replace(/https?:\/\//, ''))} [${p.free}/${p.total} ${t('proxy.free')}${recvs ? ' — ' + recvs : ''}]`;
     }).join('<br>');
     return `<div style="padding:8px 10px;border-bottom:1px solid var(--border);font-size:.75rem">
       <div style="display:flex;justify-content:space-between;margin-bottom:3px">
@@ -2375,7 +2400,7 @@ async function loadTunerHistory() {
         <span style="color:var(--muted)">${ts}</span>
       </div>
       <div style="color:${color};font-family:'JetBrains Mono',monospace;font-size:.7rem">
-        ${icon} ${e.error ? escHtml(e.error) : 'Aufgenommen via ' + escHtml((e.chosen||'').replace(/https?:\/\//, ''))}
+        ${icon} ${e.error ? escHtml(e.error) : t('tuner.recorded_via',{n:escHtml((e.chosen||'').replace(/https?:\/\//, ''))})}
       </div>
       ${recvDetails ? `<div style="color:var(--muted);font-size:.7rem;margin-top:2px">${recvDetails}</div>` : ''}
     </div>`;
@@ -2388,11 +2413,11 @@ async function toggleApiLogging() {
   await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({api_call_logging: !current})});
   const btn = document.getElementById('api-log-btn');
-  if (btn) btn.textContent = !current ? 'Aus' : 'Ein';
+  if (btn) btn.textContent = !current ? t('proxy.off') : t('proxy.on');
   if (btn) btn.style.borderColor = !current ? 'var(--yellow)' : '';
   if (btn) btn.style.color = !current ? 'var(--yellow)' : '';
-  showToast('API-Logging: ' + (!current ? 'AN' : 'AUS'), !current ? '' : 'success');
-  if (!current) showToast('Log-Level auf DEBUG setzen fuer volle Details', '');
+  showToast(t('toast.api_log',{n: !current ? t('common.on_caps') : t('common.off_caps')}), !current ? '' : 'success');
+  if (!current) showToast(t('toast.api_log_hint'), '');
 }
 
 async function setLogLevel(level) {
@@ -2402,9 +2427,9 @@ async function setLogLevel(level) {
     body: JSON.stringify({level})
   }).then(r => r.json());
   if (r.ok) {
-    showToast('Log-Level: ' + level, 'success');
+    showToast(t('toast.log_level',{n:level}), 'success');
     const el = document.getElementById('log-level-status');
-    if (el) el.textContent = 'Aktuell: ' + level;
+    if (el) el.textContent = t('settings.current',{n:level});
     // Logs sofort aktualisieren
     setTimeout(loadLogs, 500);
   }
@@ -2412,12 +2437,12 @@ async function setLogLevel(level) {
 
 async function triggerCleanupNow() {
   await fetch('/api/cleanup', {method:'POST'});
-  showToast('Cleanup gestartet', 'success');
+  showToast(t('toast.cleanup_started'), 'success');
 }
 
 async function deduplicateDb() {
   const r = await fetch('/api/admin/deduplicate', {method:'POST'}).then(r => r.json());
-  showToast(r.removed + ' Duplikate entfernt', r.removed > 0 ? 'success' : '');
+  showToast(t('toast.dups_removed',{n:r.removed}), r.removed > 0 ? 'success' : '');
   loadRecordings(); loadStatus();
 }
 
@@ -2428,14 +2453,14 @@ async function loadLogs() {
   const c = document.getElementById('log-container');
   c.innerHTML = entries.length
     ? [...entries].reverse().map(e => `<div class="log-entry"><span class="ts">${e.ts}</span><span class="level-${e.level}">${e.level}</span> ${escHtml(e.msg)}</div>`).join('')
-    : '<div style="color:var(--muted)">Keine Eintraege</div>';
+    : `<div style="color:var(--muted)">${t('logs.empty')}</div>`;
   // Log-Dateien auf Disk anzeigen
   try {
     const files = await fetch('/api/logs/files').then(r => r.json());
     const el = document.getElementById('log-files-list');
     if (el) {
       if (!files.length) {
-        el.innerHTML = '<span style="color:var(--muted)">Noch keine Dateien (kommen nach Mitternacht)</span>';
+        el.innerHTML = `<span style="color:var(--muted)">${t('logs.no_files')}</span>`;
       } else {
         el.innerHTML = files.map(f => {
           const kb = (f.size / 1024).toFixed(0);
@@ -2451,12 +2476,13 @@ async function loadLogs() {
 }
 
 // ── Modal ─────────────────────────────────────────────────
-async function openAddModal() {
-  document.getElementById('modal-title').textContent = 'Serie hinzufuegen';
+async function openAddModal(defaultKind) {
+  const kind = (defaultKind === 'movie') ? 'movie' : 'series';
+  document.getElementById('modal-title').textContent = t(kind === 'movie' ? 'modal.add_movie' : 'modal.add_series');
   ['edit-id','s-name','s-regex','tmdb-query'].forEach(id => document.getElementById(id).value='');
   document.getElementById('s-keep').value='0';
   document.getElementById('s-enabled').value='true';
-  document.getElementById('s-kind').value='series';
+  document.getElementById('s-kind').value=kind;
   document.getElementById('s-year').value='';
   document.getElementById('s-pre').value=0;
   document.getElementById('s-post').value=0;
@@ -2470,7 +2496,7 @@ async function openAddModal() {
 }
 
 async function openEditModal(s) {
-  document.getElementById('modal-title').textContent = (s.kind === 'movie' ? 'Film' : 'Serie') + ' bearbeiten';
+  document.getElementById('modal-title').textContent = t(s.kind === 'movie' ? 'modal.edit_movie' : 'modal.edit_series');
   document.getElementById('edit-id').value   = s.id;
   document.getElementById('s-name').value    = s.name;
   document.getElementById('s-regex').value   = s.regex_pattern||'';
@@ -2506,7 +2532,7 @@ async function loadChannelsForModal() {
     if (!groups[g]) groups[g]=[];
     groups[g].push(c);
   }
-  sel.innerHTML = '<option value="">-- Sender waehlen --</option>';
+  sel.innerHTML = '<option value="">' + t('modal.choose_channel') + '</option>';
   // Normalisierung: Refs können _ oder : als Separator haben, Endung variabel
   const normRef = r => (r||'').replace(/[:_]+$/,'').replace(/:/g,'_').toLowerCase();
   const currentNorm = normRef(current);
@@ -2525,7 +2551,7 @@ async function loadChannelsForModal() {
   if (current && !sel.value) {
     const opt = document.createElement('option');
     opt.value = current;
-    opt.textContent = document.getElementById('s-ch-name').value + ' (gespeichert)';
+    opt.textContent = document.getElementById('s-ch-name').value + ' ' + t('modal.saved');
     opt.selected = true;
     sel.insertBefore(opt, sel.options[1]);
   }
@@ -2549,19 +2575,19 @@ async function doTmdbSearch() {
   if (!q) return;
   const el = document.getElementById('tmdb-results');
   el.style.display='block';
-  el.innerHTML='<div style="color:var(--muted);padding:8px">Suche...</div>';
+  el.innerHTML=`<div style="color:var(--muted);padding:8px">${t('proxy.searching')}</div>`;
   const data = await fetch('/api/tmdb/search?q='+encodeURIComponent(q)).then(r=>r.json());
   if (data.error) { el.innerHTML=`<div style="color:var(--red);padding:8px">${escHtml(data.error)}</div>`; return; }
   const results = data.results||[];
-  if (!results.length) { el.innerHTML='<div style="color:var(--muted);padding:8px">Keine Treffer</div>'; return; }
+  if (!results.length) { el.innerHTML=`<div style="color:var(--muted);padding:8px">${t('tmdb.no_results')}</div>`; return; }
   el.innerHTML = results.map(r => `
     <div class="tmdb-item" id="tmdb-${r.tmdb_id}" onclick="selectTmdb(${r.tmdb_id},'${escAttr(r.name)}','${escAttr(r.regex_suggestion)}','${escAttr(r.poster_large||'')}')">
       ${r.poster?`<img class="tmdb-poster" src="${r.poster}" alt="">`:'<div class="tmdb-poster"></div>'}
       <div class="tmdb-info">
         <div class="tname">${escHtml(r.name)}</div>
-        <div class="tmeta">${escHtml(r.original_name)} &#183; ${r.year} &#183; ${r.kind==='tv'?'Serie':'Film'}</div>
-        ${r.aliases.length?`<div class="tmeta">DE: ${escHtml(r.aliases.join(', '))}</div>`:''}
-        ${r.regex_suggestion?`<div class="tregex">Regex: ${escHtml(r.regex_suggestion)}</div>`:''}
+        <div class="tmeta">${escHtml(r.original_name)} &#183; ${r.year} &#183; ${r.kind==='tv'?t('badge.series'):t('badge.movie')}</div>
+        ${r.aliases.length?`<div class="tmeta">${t('tmdb.de')} ${escHtml(r.aliases.join(', '))}</div>`:''}
+        ${r.regex_suggestion?`<div class="tregex">${t('tmdb.regex')} ${escHtml(r.regex_suggestion)}</div>`:''}
       </div>
     </div>`).join('');
 }
@@ -2585,13 +2611,13 @@ async function saveSerie() {
   const ref   = document.getElementById('s-ch-ref').value;
   const cname = document.getElementById('s-ch-name').value;
   const regex = document.getElementById('s-regex').value.trim();
-  if (!name||!ref) { showToast('Name und Sender sind Pflichtfelder!', 'error'); return; }
+  if (!name||!ref) { showToast(t('toast.required'), 'error'); return; }
   // Duplikat-Check (nur bei neuer Serie, nicht beim Bearbeiten)
   if (!id) {
     const existing = await fetch('/api/series').then(r=>r.json());
     const dup = existing.find(s => s.channel_ref === ref && s.name.toLowerCase() === name.toLowerCase());
     if (dup) {
-      showToast('Serie "' + name + '" auf diesem Sender bereits vorhanden!', 'error');
+      showToast(t('toast.dup_series',{n:name}), 'error');
       return;
     }
   }
@@ -2630,18 +2656,18 @@ function escAttr(s) { return String(s||'').replace(/\\\\/g,'\\\\\\\\').replace(/
 function fmtTs(ts) {
   if (!ts) return '&#8212;';
   const d = new Date(ts*1000);
-  return d.toLocaleDateString('de',{day:'2-digit',month:'2-digit'}) + ' ' +
-         d.toLocaleTimeString('de',{hour:'2-digit',minute:'2-digit'});
+  return d.toLocaleDateString(LC(),{day:'2-digit',month:'2-digit'}) + ' ' +
+         d.toLocaleTimeString(LC(),{hour:'2-digit',minute:'2-digit'});
 }
 function statusBadge(s) {
   const m = {
-    scheduled: ['badge-scheduled', 'Geplant'],
-    recording:  ['badge-recording', '&#11044; Laeuft'],
-    done:       ['badge-done',      'Fertig'],
-    failed:     ['badge-failed',    'Fehler'],
-    skipped:    ['badge-skipped',   'Ausgelassen'],
-    missed:     ['badge-missed',    'Verpasst'],
-    unknown:    ['badge-unknown',   '?'],
+    scheduled: ['badge-scheduled', t('status.scheduled')],
+    recording:  ['badge-recording', '&#11044; ' + t('status.recording')],
+    done:       ['badge-done',      t('status.done')],
+    failed:     ['badge-failed',    t('status.failed')],
+    skipped:    ['badge-skipped',   t('status.skipped')],
+    missed:     ['badge-missed',    t('status.missed')],
+    unknown:    ['badge-unknown',   t('status.unknown')],
   };
   const [cls,lbl] = m[s]||['',''+s];
   return `<span class="badge ${cls}">${lbl}</span>`;
@@ -2662,6 +2688,152 @@ setInterval(() => {
 }, 30000);
 """
 
+# ── i18n (client-side EN/DE) ───────────────────────────────────────────────
+# Plain-text values only — NO unescaped double quotes inside dict values.
+# t(key, vars) supports {n}-style placeholders. setLang() does a full reload.
+
+I18N_JS = r"""<script>
+(function(){
+  var DICT = {
+    en: {
+      "nav.overview":"overview","nav.series":"series","nav.movies":"movies","nav.recordings":"recordings","nav.settings":"settings","nav.help":"Help",
+      "hdr.proxy_connected":"{n} proxy connected","hdr.no_proxy":"no proxy — settings",
+      "plan.title":"Recording Plan","plan.scan":"EPG Scan","plan.loading":"Loading...",
+      "plan.legend_rec":"Will be recorded","plan.legend_live":"Now live","plan.legend_other":"Other program",
+      "plan.empty_noepg":"No EPG data — click EPG Scan","plan.empty_window":"No programs in time window",
+      "tt.no_title":"(no title)","tt.no_desc":"No description available","tt.recording":"recording ({n})","tt.click_record":"Click to record","tt.skip":"Skip this recording",
+      "qr.movie":"Movie","qr.series":"Series","qr.rec_movie":"Record movie","qr.movie_note":"Imported as a movie into the Plex Movies library",
+      "qr.this_episode":"Only this episode","qr.once_note":"One-time recording of this single episode",
+      "qr.all_episodes":"ALL EPISODES — including future ones","qr.pattern":"Search pattern (Regex)","qr.full_title":"Full title:","qr.shorten":"Shorten for more matches: e.g.","qr.rec_all":"Record all episodes",
+      "toast.dup_planned":"Already exists — recording scheduled","toast.movie_planned":"Movie recording scheduled","toast.once_planned":"One-time recording scheduled","toast.series_created":"Series set up",
+      "toast.error":"Error: {n}","toast.saved":"Saved","toast.proxy_added":"Proxy added","toast.cleanup_started":"Cleanup started",
+      "toast.dups_removed":"{n} duplicates removed","toast.entries_deleted":"{n} entries deleted","toast.rescan":"Rescan: {n}",
+      "toast.url_copied":"URL copied","toast.no_stream":"No stream available","toast.no_url":"No URL available","toast.no_stream_url":"No stream URL",
+      "toast.required":"Name and channel are required!","toast.dup_series":"Series {n} already exists on this channel!",
+      "toast.api_log":"API logging: {n}","toast.api_log_hint":"Set log level to DEBUG for full details","toast.log_level":"Log level: {n}",
+      "confirm.delete_series":"Remove series {n}? Already recorded files are kept.","confirm.clear_failed":"Remove all error entries from the list? Recorded files are kept.","confirm.delete_rec":"Remove entry from the list? The recorded file is kept.","confirm.remove_proxy":"Remove proxy from the list?",
+      "status.scheduled":"Scheduled","status.recording":"Recording","status.done":"Done","status.failed":"Failed","status.skipped":"Skipped","status.missed":"Missed","status.unknown":"?",
+      "filter.all":"All",
+      "sort.date_desc":"↓ Date","sort.date_asc":"↑ Date","sort.series_asc":"↑ Series","sort.series_desc":"↓ Series","sort.title_asc":"↑ Title","sort.title_desc":"↓ Title","sort.status":"Status",
+      "th.name":"Name","th.type":"Type","th.channel":"Channel","th.regex":"Regex","th.keep":"Keep","th.status":"Status","th.action":"Action","th.series":"Series","th.title":"Title","th.start":"Start","th.end":"End","th.mb":"MB","th.proxy":"Proxy",
+      "series.title":"Series","movies.title":"Movies","common.new":"+ New","table.empty":"No entries yet",
+      "badge.movie":"Movie","badge.series":"Series","badge.once":"One-time","badge.active":"Active","badge.inactive":"Inactive",
+      "common.all":"all","common.edit":"Edit","common.remove":"Remove","common.close":"Close","common.name":"Name","common.add":"Add","common.save":"Save","common.search":"Search","common.yes":"Yes","common.no":"No","common.days":"days","common.on_caps":"ON","common.off_caps":"OFF",
+      "rec.title":"Recordings","rec.refresh":"Refresh","rec.refresh_title":"Refresh","rec.clear_failed":"Clear errors","rec.clear_failed_title":"Delete all error recordings","rec.rescan":"Rescan","rec.rescan_title":"Fetch status of all recordings from proxy","rec.scanning":"Scanning...",
+      "rec.empty":"No recordings","rec.remaining":"~{n} min left","rec.info_title":"Information","rec.protect_title":"Protect","rec.unprotect_title":"Remove protection","rec.delete_title":"Delete entry (file is kept)","rec.file_missing_title":"File not found","rec.sort_title":"Sorting",
+      "player.fullscreen":"Fullscreen","player.no_video":"Your browser does not support video.",
+      "detail.status":"Status","detail.source":"Source","detail.start":"Start","detail.end":"End","detail.channel":"Channel","detail.proxy":"Proxy","detail.tuner":"Tuner","detail.shared":"shared","detail.filesize":"File size","detail.file":"File","detail.exists":"present","detail.missing":"missing","detail.filepath":"FILE PATH","detail.no_path":"no path",
+      "proxy.empty_cfg":"No proxies configured","proxy.busy":"busy ({n})","proxy.free":"free","proxy.free_total":"{a} free / {b} total","proxy.offline":"Not reachable","proxy.disable":"Disable","proxy.enable":"Enable","proxy.off":"Off","proxy.on":"On","proxy.free_short":"{a}/{b} free","proxy.searching":"Searching...","proxy.ssdp_discovery":"SSDP discovery","proxy.offline_l":"offline",
+      "tuner.recorded_via":"Recorded via {n}",
+      "settings.appearance":"Appearance","settings.theme":"Theme","settings.theme_desc":"Light or dark — like in e2proxy","settings.dark":"Dark","settings.light":"Light","settings.language":"Language","settings.language_desc":"Interface language — like in e2proxy",
+      "settings.proxies":"Proxies","settings.proxy_url":"Proxy URL","settings.recordings":"Recordings","settings.subdir":"Recording subfolder (optional)","settings.subdir_ph":"empty = e2proxy default path","settings.subdir_help":"Empty = e2proxy writes to its own path. Optional: subfolder relative to it, e.g. <code>Series</code>",
+      "settings.profile":"Stream profile","settings.profile_help":"Loaded from proxy","settings.pre_buffer":"Pre-buffer (sec)","settings.post_buffer":"Post-buffer (sec)",
+      "settings.cleanup":"Cleanup strategy","settings.trigger":"Trigger","settings.trig_onnew":"On new recording","settings.trig_daily":"Daily","settings.trig_never":"Never","settings.hour":"Time","settings.cleanup_now":"Keep-Last cleanup","settings.dedup":"Remove duplicates",
+      "settings.epg_tmdb":"EPG & TMDB","settings.scan_interval":"Scan interval (sec)","settings.lookahead":"Preview (hours)","settings.tmdb_key":"TMDB API key","settings.tmdb_lang":"TMDB language",
+      "settings.logs":"Logs","settings.log_files":"LOG FILES","settings.tuner_history":"Tuner history","settings.log_level":"Log level","settings.log_level_desc":"DEBUG shows all internal operations — ideal for troubleshooting. Set back to INFO after diagnosis.","settings.log_retention":"Keep log files:","settings.log_path_help":"Logs are in <code>/data/logs/</code> — rotated daily","settings.api_log":"API call logging","settings.api_log_desc":"Logs every request/response to e2proxy — enable only for troubleshooting",
+      "logs.empty":"No entries","logs.no_files":"No files yet (appear after midnight)","settings.current":"Current: {n}",
+      "modal.tmdb":"TMDB search (optional)","modal.tmdb_ph":"Search series name...","modal.name":"Series name","modal.channel":"Channel","modal.choose_channel":"-- choose channel --","modal.regex":"Regex pattern","modal.regex_help":"e.g. <code>GNTM|Germany.s Next Topmodel</code> · <code>^Tatort</code>","modal.type":"Type","modal.type_series":"Series","modal.type_movie":"Movie","modal.active":"Active","modal.keep":"Keep Last (0=all)","modal.year":"Year (for movies)","modal.year_ph":"e.g. 2018","modal.pre":"Start recording earlier (sec)","modal.pre_help":"Positive = start earlier, negative = later","modal.post":"Run recording longer (sec)","modal.post_help":"Positive = run longer, negative = end earlier","modal.add_series":"Add series","modal.add_movie":"Add movie","modal.edit_series":"Edit series","modal.edit_movie":"Edit movie","modal.saved":"(saved)",
+      "tmdb.no_results":"No results","tmdb.de":"DE:","tmdb.regex":"Regex:",
+      "help.title":"Help & Changelog","help.back":"Back","help.subtitle":"Help & Changelog",
+      "help.h_overview":"Overview","help.overview":"Shows all channels as a horizontal timeline. Blue blocks = scheduled recordings, green = live.<br><br><strong>Click a slot:</strong> Record once or schedule as a series. Slots without an EPG description are clickable too.<br><br><strong>Hover:</strong> Title, time, description. For scheduled recordings: a Skip button.<br><br><strong>EPG scan:</strong> Loads fresh data from e2proxy, runs automatically every hour.",
+      "help.h_series":"Series & Movies","help.series":"<strong>Type:</strong> For each recording you choose Movie or Series. Affects the path/library in Plex (Movies vs. TV Shows) and the .nfo format.<br><br><strong>Mode:</strong> For series additionally only this episode or all episodes.<br><br><strong>Regex pattern</strong> determines which EPG titles are recorded (case-insensitive):<br><code>Die Geissens</code> all episodes &bull; <code>GNTM|Germany.s Next Topmodel</code> both spellings &bull; <code>^Tatort</code> only titles starting with Tatort<br><br><strong>Pre/Post offset (sec):</strong> Configurable per series. Some channels regularly start their shows 30s earlier or end later. Positive values = start earlier / run longer.<br><br><strong>Back-to-back:</strong> If a recording directly follows another on the same channel (gap below 60s), it starts 2 minutes earlier automatically — avoids time drift.<br><br><strong>Keep Last:</strong> Keeps only the last N recordings, older ones are deleted automatically (incl. .nfo). 0 = all.<br><br><strong>TMDB search:</strong> Provides the local title, aliases and a regex suggestion.<br><br><strong>Duplicate protection:</strong> Same name + channel cannot be created twice.",
+      "help.h_recordings":"Recordings","help.recordings":"Sortable by date, series, title, status. Filterable by status.<br><br><strong>Status:</strong> Scheduled · <span style=color:var(--accent2)>Running</span> · <span style=color:var(--green)>Done</span> · <span style=color:var(--red)>Failed</span> · <span style=color:var(--yellow)>Missed</span> · Skipped<br><br><strong>Detail:</strong> File path, size, proxy, source (epg-scheduler / ui-quickrecord).<br><br><strong>Play:</strong> Play the recording in the browser (requires <code>/recording/stream</code> in e2proxy).<br><br><strong>Rescan:</strong> Checks proxy status + file system, updates missing files.<br><br><strong>Clear errors:</strong> Removes all entries with status Failed, Missed, Skipped and missing files.",
+      "help.h_settings":"Settings","help.settings":"<strong>Proxies:</strong> SSDP discovery or manual URL. Multiple proxies possible — the one with the most free tuners is chosen automatically.<br><br><strong>Stream profile:</strong> Loaded from e2proxy. Recommended: <code>remux-ac3</code>.<br><br><strong>Pre/Post buffer:</strong> Seconds before/after EPG time for imprecise broadcast times.<br><br><strong>Cleanup trigger:</strong> On new recording is recommended.<br><br><strong>TMDB API key:</strong> Free at themoviedb.org.<br><br><strong>API call logging:</strong> Logs every request/response to e2proxy — only for troubleshooting, combine with log level DEBUG.",
+      "help.h_tech":"Technical Details & Raspberry Pi Notes","help.tech":"<strong>Recording lifecycle:</strong> EPG scan → regex match → Scheduled. Shortly before broadcast start: choose a proxy with a free tuner → <code>POST /api/record/start</code> → file path from response. Watchdog every 30s via <code>GET /api/record/status</code> → on completion: explicit stop to free the tuner.<br><br><strong>No own ffmpeg:</strong> All recordings run in e2proxy. The storage location is determined by e2proxy (<code>recordings_path</code>).<br><br><strong>Data:</strong> <code>~/e2recorder/data/</code> — config.json, series.json, recordings.json, tuner_history.json.<br><br><strong style=color:var(--red)>&#9888; Raspberry Pi — power supply & cable:</strong> Under load the Pi can freeze with a poor power supply (symptom: <code>hwmon: Undervoltage detected!</code> in dmesg).<br>&bull; <strong>Power supply:</strong> At least 27W USB-C (5V/5A) — e.g. Anker Nano II 65W<br>&bull; <strong>Cable:</strong> Short, thick USB-C cable — thin/long cables cause voltage drop under load<br>Check: <code>vcgencmd get_throttled</code> → should return <code>0x0</code>",
+      "help.h_changelog":"Changelog"
+    },
+    de: {
+      "nav.overview":"übersicht","nav.series":"serien","nav.movies":"filme","nav.recordings":"aufnahmen","nav.settings":"einstellungen","nav.help":"Hilfe",
+      "hdr.proxy_connected":"{n} Proxy verbunden","hdr.no_proxy":"kein proxy — settings",
+      "plan.title":"Aufnahmeplan","plan.scan":"EPG-Scan","plan.loading":"Laedt...",
+      "plan.legend_rec":"Wird aufgenommen","plan.legend_live":"Laeuft gerade","plan.legend_other":"Sonstiges Programm",
+      "plan.empty_noepg":"Keine EPG-Daten — EPG-Scan klicken","plan.empty_window":"Keine Sendungen im Zeitfenster",
+      "tt.no_title":"(kein Titel)","tt.no_desc":"Keine Beschreibung verfügbar","tt.recording":"wird aufgenommen ({n})","tt.click_record":"Klicken zum Aufnehmen","tt.skip":"Diese Aufnahme auslassen",
+      "qr.movie":"Film","qr.series":"Serie","qr.rec_movie":"Film aufnehmen","qr.movie_note":"Wird als Film in Plex Movies-Library importiert",
+      "qr.this_episode":"Nur diese Folge","qr.once_note":"Einmalige Aufnahme dieser einen Folge",
+      "qr.all_episodes":"ALLE FOLGEN — auch zukünftige","qr.pattern":"Suchmuster (Regex)","qr.full_title":"Vollst. Titel:","qr.shorten":"Kürzen für mehr Treffer: z.B.","qr.rec_all":"Alle Folgen aufnehmen",
+      "toast.dup_planned":"Bereits vorhanden — Aufnahme geplant","toast.movie_planned":"Film-Aufnahme geplant","toast.once_planned":"Einmalige Aufnahme geplant","toast.series_created":"Serie eingerichtet",
+      "toast.error":"Fehler: {n}","toast.saved":"Gespeichert","toast.proxy_added":"Proxy hinzugefuegt","toast.cleanup_started":"Cleanup gestartet",
+      "toast.dups_removed":"{n} Duplikate entfernt","toast.entries_deleted":"{n} Eintraege geloescht","toast.rescan":"Rescan: {n}",
+      "toast.url_copied":"URL kopiert","toast.no_stream":"Kein Stream verfuegbar","toast.no_url":"Keine URL verfuegbar","toast.no_stream_url":"Keine Stream-URL",
+      "toast.required":"Name und Sender sind Pflichtfelder!","toast.dup_series":"Serie {n} auf diesem Sender bereits vorhanden!",
+      "toast.api_log":"API-Logging: {n}","toast.api_log_hint":"Log-Level auf DEBUG setzen fuer volle Details","toast.log_level":"Log-Level: {n}",
+      "confirm.delete_series":"Serie {n} entfernen? Bereits aufgenommene Dateien bleiben erhalten.","confirm.clear_failed":"Alle Fehler-Eintraege aus der Liste entfernen? Aufgenommene Dateien bleiben erhalten.","confirm.delete_rec":"Eintrag aus der Liste entfernen? Die aufgenommene Datei bleibt erhalten.","confirm.remove_proxy":"Proxy aus der Liste entfernen?",
+      "status.scheduled":"Geplant","status.recording":"Laeuft","status.done":"Fertig","status.failed":"Fehler","status.skipped":"Ausgelassen","status.missed":"Verpasst","status.unknown":"?",
+      "filter.all":"Alle",
+      "sort.date_desc":"↓ Datum","sort.date_asc":"↑ Datum","sort.series_asc":"↑ Serie","sort.series_desc":"↓ Serie","sort.title_asc":"↑ Titel","sort.title_desc":"↓ Titel","sort.status":"Status",
+      "th.name":"Name","th.type":"Typ","th.channel":"Sender","th.regex":"Regex","th.keep":"Keep","th.status":"Status","th.action":"Aktion","th.series":"Serie","th.title":"Titel","th.start":"Start","th.end":"Ende","th.mb":"MB","th.proxy":"Proxy",
+      "series.title":"Serien","movies.title":"Filme","common.new":"+ Neu","table.empty":"Noch keine Einträge",
+      "badge.movie":"Film","badge.series":"Serie","badge.once":"Einmalig","badge.active":"Aktiv","badge.inactive":"Inaktiv",
+      "common.all":"alle","common.edit":"Bearbeiten","common.remove":"Entfernen","common.close":"Schliessen","common.name":"Name","common.add":"Hinzufuegen","common.save":"Speichern","common.search":"Suchen","common.yes":"Ja","common.no":"Nein","common.days":"Tage","common.on_caps":"AN","common.off_caps":"AUS",
+      "rec.title":"Aufnahmen","rec.refresh":"Refresh","rec.refresh_title":"Aktualisieren","rec.clear_failed":"Fehler loeschen","rec.clear_failed_title":"Alle Fehler-Aufnahmen loeschen","rec.rescan":"Rescan","rec.rescan_title":"Status aller Aufnahmen vom Proxy abrufen","rec.scanning":"Scanne...",
+      "rec.empty":"Keine Aufnahmen","rec.remaining":"noch ~{n} min","rec.info_title":"Informationen","rec.protect_title":"Schuetzen","rec.unprotect_title":"Schutz aufheben","rec.delete_title":"Eintrag loeschen (Datei bleibt erhalten)","rec.file_missing_title":"Datei nicht gefunden","rec.sort_title":"Sortierung",
+      "player.fullscreen":"Vollbild","player.no_video":"Ihr Browser unterstuetzt kein Video.",
+      "detail.status":"Status","detail.source":"Quelle","detail.start":"Start","detail.end":"Ende","detail.channel":"Sender","detail.proxy":"Proxy","detail.tuner":"Tuner","detail.shared":"shared","detail.filesize":"Dateigröße","detail.file":"Datei","detail.exists":"vorhanden","detail.missing":"fehlt","detail.filepath":"DATEIPFAD","detail.no_path":"kein Pfad",
+      "proxy.empty_cfg":"Keine Proxies konfiguriert","proxy.busy":"belegt ({n})","proxy.free":"frei","proxy.free_total":"{a} frei / {b} gesamt","proxy.offline":"Nicht erreichbar","proxy.disable":"Deaktivieren","proxy.enable":"Aktivieren","proxy.off":"Aus","proxy.on":"Ein","proxy.free_short":"{a}/{b} frei","proxy.searching":"Suche...","proxy.ssdp_discovery":"SSDP-Discovery","proxy.offline_l":"offline",
+      "tuner.recorded_via":"Aufgenommen via {n}",
+      "settings.appearance":"Erscheinungsbild","settings.theme":"Theme","settings.theme_desc":"Hell oder Dunkel — wie im e2proxy","settings.dark":"Dunkel","settings.light":"Hell","settings.language":"Sprache","settings.language_desc":"Sprache der Oberfläche — wie im e2proxy",
+      "settings.proxies":"Proxies","settings.proxy_url":"Proxy URL","settings.recordings":"Aufnahmen","settings.subdir":"Aufnahme-Unterordner (optional)","settings.subdir_ph":"leer = e2proxy Standard-Pfad","settings.subdir_help":"Leer = e2proxy schreibt in seinen eigenen Pfad. Optional: Unterordner relativ dazu, z.B. <code>Serien</code>",
+      "settings.profile":"Stream-Profil","settings.profile_help":"Wird aus Proxy geladen","settings.pre_buffer":"Pre-Buffer (Sek)","settings.post_buffer":"Post-Buffer (Sek)",
+      "settings.cleanup":"Aufraeum-Strategie","settings.trigger":"Trigger","settings.trig_onnew":"Bei neuer Aufnahme","settings.trig_daily":"Taeglich","settings.trig_never":"Nie","settings.hour":"Uhrzeit","settings.cleanup_now":"Keep-Last Cleanup","settings.dedup":"Duplikate bereinigen",
+      "settings.epg_tmdb":"EPG & TMDB","settings.scan_interval":"Scan-Intervall (Sek)","settings.lookahead":"Vorschau (Stunden)","settings.tmdb_key":"TMDB API Key","settings.tmdb_lang":"TMDB Sprache",
+      "settings.logs":"Logs","settings.log_files":"LOG-DATEIEN","settings.tuner_history":"Tuner-History","settings.log_level":"Log-Level","settings.log_level_desc":"DEBUG zeigt alle internen Abläufe — ideal für Troubleshooting. Nach der Diagnose wieder auf INFO setzen.","settings.log_retention":"Log-Dateien aufbewahren:","settings.log_path_help":"Logs liegen in <code>/data/logs/</code> — täglich rotiert","settings.api_log":"API-Call Logging","settings.api_log_desc":"Loggt jeden Request/Response zum e2proxy — nur für Troubleshooting einschalten",
+      "logs.empty":"Keine Eintraege","logs.no_files":"Noch keine Dateien (kommen nach Mitternacht)","settings.current":"Aktuell: {n}",
+      "modal.tmdb":"TMDB-Suche (optional)","modal.tmdb_ph":"Serienname suchen...","modal.name":"Serienname","modal.channel":"Sender","modal.choose_channel":"-- Sender waehlen --","modal.regex":"Regex-Pattern","modal.regex_help":"z.B. <code>GNTM|Germany.s Next Topmodel</code> · <code>^Zwischen Tuell</code>","modal.type":"Typ","modal.type_series":"Serie","modal.type_movie":"Film","modal.active":"Aktiv","modal.keep":"Keep Last (0=alle)","modal.year":"Jahr (für Filme)","modal.year_ph":"z.B. 2018","modal.pre":"Aufnahme früher starten (Sek.)","modal.pre_help":"Positiv = früher starten, negativ = später","modal.post":"Aufnahme länger laufen (Sek.)","modal.post_help":"Positiv = länger laufen, negativ = früher beenden","modal.add_series":"Serie hinzufuegen","modal.add_movie":"Film hinzufuegen","modal.edit_series":"Serie bearbeiten","modal.edit_movie":"Film bearbeiten","modal.saved":"(gespeichert)",
+      "tmdb.no_results":"Keine Treffer","tmdb.de":"DE:","tmdb.regex":"Regex:",
+      "help.title":"Hilfe & Changelog","help.back":"Zurück","help.subtitle":"Hilfe & Changelog",
+      "help.h_overview":"Overview","help.overview":"Zeigt alle Sender als horizontale Zeitachse. Blaue Blöcke = geplante Aufnahmen, Grün = läuft.<br><br><strong>Klick auf Slot:</strong> Einmalig aufnehmen oder als Serie einplanen. Auch Slots ohne EPG-Beschreibung sind klickbar.<br><br><strong>Hover:</strong> Titel, Zeit, Beschreibung. Bei geplanten Aufnahmen: Auslassen-Button.<br><br><strong>EPG-Scan:</strong> Lädt frische Daten vom e2proxy, läuft automatisch stündlich.",
+      "help.h_series":"Serien & Filme","help.series":"<strong>Typ:</strong> Bei jeder Aufnahme wählst du Film oder Serie. Beeinflusst Pfad/Library in Plex (Movies vs. TV Shows) und .nfo Format.<br><br><strong>Modus:</strong> Bei Serien zusätzlich nur diese Folge oder alle Folgen.<br><br><strong>Regex-Pattern</strong> bestimmt welche EPG-Titel aufgenommen werden (case-insensitive):<br><code>Die Geissens</code> alle Folgen &bull; <code>GNTM|Germany.s Next Topmodel</code> beide Schreibweisen &bull; <code>^Tatort</code> nur Titel die mit Tatort beginnen<br><br><strong>Pre/Post-Offset (Sek.):</strong> Pro Serie konfigurierbar. Manche Sender starten ihre Sendungen regelmäßig 30s früher oder enden später. Positive Werte = früher starten / länger laufen.<br><br><strong>Back-to-Back:</strong> Folgt eine Aufnahme direkt auf eine andere auf dem gleichen Sender (unter 60s Lücke), startet sie automatisch 2 Minuten früher — vermeidet Time-Drift.<br><br><strong>Keep Last:</strong> Behält nur die letzten N Aufnahmen, ältere werden automatisch gelöscht (inkl. .nfo). 0 = alle.<br><br><strong>TMDB-Suche:</strong> Liefert deutschen Titel, Aliases und Regex-Vorschlag.<br><br><strong>Duplikat-Schutz:</strong> Gleicher Name + Sender kann nicht doppelt angelegt werden.",
+      "help.h_recordings":"Aufnahmen","help.recordings":"Sortierbar nach Datum, Serie, Titel, Status. Filterbar nach Status.<br><br><strong>Status:</strong> Geplant · <span style=color:var(--accent2)>Läuft</span> · <span style=color:var(--green)>Fertig</span> · <span style=color:var(--red)>Fehler</span> · <span style=color:var(--yellow)>Verpasst</span> · Ausgelassen<br><br><strong>Detail:</strong> Dateipfad, Größe, Proxy, Quelle (epg-scheduler / ui-quickrecord).<br><br><strong>Play:</strong> Aufnahme im Browser abspielen (benötigt <code>/recording/stream</code> im e2proxy).<br><br><strong>Rescan:</strong> Prüft Proxy-Status + Dateisystem, aktualisiert fehlende Dateien.<br><br><strong>Fehler löschen:</strong> Entfernt alle Einträge mit Status Fehler, Verpasst, Ausgelassen und fehlenden Dateien.",
+      "help.h_settings":"Settings","help.settings":"<strong>Proxies:</strong> SSDP-Discovery oder manuelle URL. Mehrere Proxies möglich — der mit den meisten freien Tunern wird automatisch gewählt.<br><br><strong>Stream-Profil:</strong> Wird aus e2proxy geladen. Empfohlen: <code>remux-ac3</code>.<br><br><strong>Pre/Post-Buffer:</strong> Sekunden vor/nach EPG-Zeit für ungenaue Sendezeiten.<br><br><strong>Aufräum-Trigger:</strong> Bei neuer Aufnahme empfohlen.<br><br><strong>TMDB API Key:</strong> Kostenlos unter themoviedb.org.<br><br><strong>API-Call Logging:</strong> Loggt jeden Request/Response zum e2proxy — nur für Troubleshooting, kombinieren mit Log-Level DEBUG.",
+      "help.h_tech":"Technische Details & Raspberry Pi Hinweise","help.tech":"<strong>Aufnahme-Lifecycle:</strong> EPG-Scan → Regex-Match → Geplant. Kurz vor Sendestart: Proxy mit freiem Tuner wählen → <code>POST /api/record/start</code> → Dateipfad aus Response. Watchdog alle 30s via <code>GET /api/record/status</code> → bei Fertig: expliziter Stop für Tuner-Freigabe.<br><br><strong>Kein eigenes ffmpeg:</strong> Alle Aufnahmen laufen im e2proxy. Speicherort wird vom e2proxy bestimmt (<code>recordings_path</code>).<br><br><strong>Daten:</strong> <code>~/e2recorder/data/</code> — config.json, series.json, recordings.json, tuner_history.json.<br><br><strong style=color:var(--red)>&#9888; Raspberry Pi — Netzteil & Kabel:</strong> Unter Last kann der Pi bei schlechter Stromversorgung einfrieren (Symptom: <code>hwmon: Undervoltage detected!</code> in dmesg).<br>&bull; <strong>Netzteil:</strong> Mindestens 27W USB-C (5V/5A) — z.B. Anker Nano II 65W<br>&bull; <strong>Kabel:</strong> Kurzes, dickes USB-C Kabel — dünne/lange Kabel verursachen Spannungsabfall unter Last<br>Prüfen: <code>vcgencmd get_throttled</code> → sollte <code>0x0</code> zurückgeben",
+      "help.h_changelog":"Changelog"
+    }
+  };
+  function detect(){
+    try { var s = localStorage.getItem('e2recorder-lang'); if (s === 'en' || s === 'de') return s; } catch(e){}
+    var n = (navigator.language || 'en').toLowerCase();
+    if (n.indexOf('de') === 0) return 'de';
+    return 'en';
+  }
+  var LANG = detect();
+  window.getLang = function(){ return LANG; };
+  window.LC = function(){ return LANG === 'de' ? 'de-DE' : 'en-US'; };
+  window.t = function(key, vars){
+    var s = (DICT[LANG] && DICT[LANG][key]);
+    if (s === undefined) s = DICT.en[key];
+    if (s === undefined) s = key;
+    if (vars) { for (var k in vars) { s = s.split('{'+k+'}').join(vars[k]); } }
+    return s;
+  };
+  window.setLang = function(l){
+    try { localStorage.setItem('e2recorder-lang', l); } catch(e){}
+    location.reload();
+  };
+  window.applyI18n = function(){
+    document.querySelectorAll('[data-i18n]').forEach(function(el){
+      try { el.textContent = t(el.getAttribute('data-i18n')); } catch(e){}
+    });
+    document.querySelectorAll('[data-i18n-html]').forEach(function(el){
+      try { el.innerHTML = t(el.getAttribute('data-i18n-html')); } catch(e){}
+    });
+    document.querySelectorAll('[data-i18n-ph]').forEach(function(el){
+      try { el.setAttribute('placeholder', t(el.getAttribute('data-i18n-ph'))); } catch(e){}
+    });
+    document.querySelectorAll('[data-i18n-title]').forEach(function(el){
+      try { el.setAttribute('title', t(el.getAttribute('data-i18n-title'))); } catch(e){}
+    });
+    try {
+      document.documentElement.setAttribute('lang', LANG);
+      var sel = document.getElementById('lang-sel');
+      if (sel) sel.value = LANG;
+    } catch(e){}
+  };
+  document.addEventListener('DOMContentLoaded', function(){ try { applyI18n(); } catch(e){} });
+})();
+</script>"""
+
+
 # ── Web UI HTML ────────────────────────────────────────────────────────────
 
 _HTML = """<!DOCTYPE html>
@@ -2670,6 +2842,7 @@ _HTML = """<!DOCTYPE html>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>e2recorder</title>
 <style>{CSS}</style>
+{I18N}
 </head>
 <body>
 <script>(function(){var t=localStorage.getItem('e2recorder-theme');if(t==='light')document.documentElement.setAttribute('data-theme','light');})();</script>
@@ -2677,11 +2850,12 @@ _HTML = """<!DOCTYPE html>
   <div class="logo">e2<span>recorder</span></div>
   <div class="sub" id="proxy-status-header" style="margin-left:12px">...</div>
   <nav>
-    <button class="active" onclick="switchTab('plan',this)">overview</button>
-    <button onclick="switchTab('series',this)">serien</button>
-    <button onclick="switchTab('recordings',this)">aufnahmen</button>
-    <button onclick="switchTab('settings',this)">settings</button>
-    <a href="/help" target="_blank" style="font-size:1rem;padding:6px 12px;color:var(--muted);text-decoration:none;font-family:'JetBrains Mono',monospace;border-bottom:2px solid transparent;transition:all .15s" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">?</a>
+    <button class="active" onclick="switchTab('plan',this)" data-i18n="nav.overview">overview</button>
+    <button onclick="switchTab('series',this)" data-i18n="nav.series">serien</button>
+    <button onclick="switchTab('movies',this)" data-i18n="nav.movies">filme</button>
+    <button onclick="switchTab('recordings',this)" data-i18n="nav.recordings">aufnahmen</button>
+    <button onclick="switchTab('settings',this)" data-i18n="nav.settings">settings</button>
+    <button onclick="switchTab('help',this)" data-i18n-title="nav.help" title="Hilfe" style="font-size:1rem;padding:7px 14px">?</button>
   </nav>
 </header>
 <div class="toast" id="toast"></div>
@@ -2689,13 +2863,13 @@ _HTML = """<!DOCTYPE html>
   <div class="tab active" id="tab-plan">
     <div class="card">
       <div class="card-header">
-        <span class="card-title">Aufnahmeplan</span>
+        <span class="card-title" data-i18n="plan.title">Aufnahmeplan</span>
         <div style="display:flex;gap:8px;align-items:center">
           <select id="plan-hours" onchange="loadPlan()" style="width:auto;padding:6px 10px">
             <option value="6">6h</option><option value="12">12h</option>
             <option value="24" selected>24h</option><option value="48">48h</option>
           </select>
-          <button class="btn btn-primary" onclick="triggerScan(this)">&#8635; EPG-Scan</button>
+          <button class="btn btn-primary" onclick="triggerScan(this)">&#8635; <span data-i18n="plan.scan">EPG-Scan</span></button>
         </div>
       </div>
       <div class="plan-day-tabs" id="plan-day-tabs"></div>
@@ -2707,9 +2881,9 @@ _HTML = """<!DOCTYPE html>
       </div>
       <div class="epg-tooltip" id="epg-tooltip"></div>
       <div class="plan-legend">
-        <span><span class="legend-box" style="background:rgba(88,166,255,.18);border:1px solid rgba(88,166,255,.4)"></span>Wird aufgenommen</span>
-        <span><span class="legend-box" style="background:rgba(46,160,67,.15);border:1px solid rgba(46,160,67,.4)"></span>Laeuft gerade</span>
-        <span><span class="legend-box" style="background:rgba(139,148,158,.08);border:1px solid rgba(139,148,158,.15)"></span>Sonstiges Programm</span>
+        <span><span class="legend-box" style="background:rgba(88,166,255,.18);border:1px solid rgba(88,166,255,.4)"></span><span data-i18n="plan.legend_rec">Wird aufgenommen</span></span>
+        <span><span class="legend-box" style="background:rgba(46,160,67,.15);border:1px solid rgba(46,160,67,.4)"></span><span data-i18n="plan.legend_live">Laeuft gerade</span></span>
+        <span><span class="legend-box" style="background:rgba(139,148,158,.08);border:1px solid rgba(139,148,158,.15)"></span><span data-i18n="plan.legend_other">Sonstiges Programm</span></span>
       </div>
     </div>
   </div>
@@ -2717,19 +2891,29 @@ _HTML = """<!DOCTYPE html>
   <div class="tab" id="tab-series">
     <div class="card">
       <div class="card-header">
-        <span class="card-title">Serien &amp; Filme</span>
+        <span class="card-title" data-i18n="series.title">Serien</span>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <select id="series-kind-filter" onchange="loadSeries()" style="padding:5px 8px;width:auto" title="Filter">
-            <option value="all">Alle</option>
-            <option value="series">Nur Serien</option>
-            <option value="movie">Nur Filme</option>
-          </select>
-          <button class="btn btn-primary" onclick="openAddModal()">+ Neu</button>
+          <button class="btn btn-primary" onclick="openAddModal('series')" data-i18n="common.new">+ Neu</button>
         </div>
       </div>
       <table>
-        <thead><tr><th>Name</th><th>Typ</th><th>Sender</th><th>Regex</th><th>Keep</th><th>Status</th><th>Aktion</th></tr></thead>
+        <thead><tr><th data-i18n="th.name">Name</th><th data-i18n="th.type">Typ</th><th data-i18n="th.channel">Sender</th><th data-i18n="th.regex">Regex</th><th data-i18n="th.keep">Keep</th><th data-i18n="th.status">Status</th><th data-i18n="th.action">Aktion</th></tr></thead>
         <tbody id="series-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="tab" id="tab-movies">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title" data-i18n="movies.title">Filme</span>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="openAddModal('movie')" data-i18n="common.new">+ Neu</button>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th data-i18n="th.name">Name</th><th data-i18n="th.type">Typ</th><th data-i18n="th.channel">Sender</th><th data-i18n="th.regex">Regex</th><th data-i18n="th.keep">Keep</th><th data-i18n="th.status">Status</th><th data-i18n="th.action">Aktion</th></tr></thead>
+        <tbody id="movies-tbody"></tbody>
       </table>
     </div>
   </div>
@@ -2737,33 +2921,33 @@ _HTML = """<!DOCTYPE html>
   <div class="tab" id="tab-recordings">
     <div class="card">
       <div class="card-header">
-        <span class="card-title">Aufnahmen</span>
+        <span class="card-title" data-i18n="rec.title">Aufnahmen</span>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <button class="btn btn-sm" onclick="loadRecordings()" title="Aktualisieren">&#8635; Refresh</button>
-          <button class="btn btn-sm btn-danger" onclick="clearFailedRecs()" title="Alle Fehler-Aufnahmen loeschen">&#128465; Fehler loeschen</button>
-          <button class="btn btn-sm" onclick="rescueScan()" title="Status aller Aufnahmen vom Proxy abrufen">&#128269; Rescan</button>
-          <select id="rec-sort" onchange="loadRecordings()" style="width:auto;padding:5px 8px" title="Sortierung">
-            <option value="start_desc">&#8595; Datum</option>
-            <option value="start_asc">&#8593; Datum</option>
-            <option value="serie_asc">&#8593; Serie</option>
-            <option value="serie_desc">&#8595; Serie</option>
-            <option value="title_asc">&#8593; Titel</option>
-            <option value="title_desc">&#8595; Titel</option>
-            <option value="status">Status</option>
+          <button class="btn btn-sm" onclick="loadRecordings()" data-i18n-title="rec.refresh_title" title="Aktualisieren">&#8635; <span data-i18n="rec.refresh">Refresh</span></button>
+          <button class="btn btn-sm btn-danger" onclick="clearFailedRecs()" data-i18n-title="rec.clear_failed_title" title="Alle Fehler-Aufnahmen loeschen">&#128465; <span data-i18n="rec.clear_failed">Fehler loeschen</span></button>
+          <button class="btn btn-sm" onclick="rescueScan()" data-i18n-title="rec.rescan_title" title="Status aller Aufnahmen vom Proxy abrufen">&#128269; <span data-i18n="rec.rescan">Rescan</span></button>
+          <select id="rec-sort" onchange="loadRecordings()" style="width:auto;padding:5px 8px" data-i18n-title="rec.sort_title" title="Sortierung">
+            <option value="start_desc" data-i18n="sort.date_desc">&#8595; Datum</option>
+            <option value="start_asc" data-i18n="sort.date_asc">&#8593; Datum</option>
+            <option value="serie_asc" data-i18n="sort.series_asc">&#8593; Serie</option>
+            <option value="serie_desc" data-i18n="sort.series_desc">&#8595; Serie</option>
+            <option value="title_asc" data-i18n="sort.title_asc">&#8593; Titel</option>
+            <option value="title_desc" data-i18n="sort.title_desc">&#8595; Titel</option>
+            <option value="status" data-i18n="sort.status">Status</option>
           </select>
           <select id="rec-filter" onchange="loadRecordings()" style="width:auto;padding:5px 8px">
-          <option value="">Alle</option>
-          <option value="scheduled">Geplant</option>
-          <option value="recording">Laeuft</option>
-          <option value="done">Fertig</option>
-          <option value="failed">Fehler</option>
-          <option value="skipped">Ausgelassen</option>
-          <option value="missed">Verpasst</option>
+          <option value="" data-i18n="filter.all">Alle</option>
+          <option value="scheduled" data-i18n="status.scheduled">Geplant</option>
+          <option value="recording" data-i18n="status.recording">Laeuft</option>
+          <option value="done" data-i18n="status.done">Fertig</option>
+          <option value="failed" data-i18n="status.failed">Fehler</option>
+          <option value="skipped" data-i18n="status.skipped">Ausgelassen</option>
+          <option value="missed" data-i18n="status.missed">Verpasst</option>
           </select>
         </div>
       </div>
       <table>
-        <thead><tr><th>Serie</th><th>Titel</th><th>Start</th><th>Ende</th><th>MB</th><th>Proxy</th><th>Status</th><th>Aktion</th></tr></thead>
+        <thead><tr><th data-i18n="th.series">Serie</th><th data-i18n="th.title">Titel</th><th data-i18n="th.start">Start</th><th data-i18n="th.end">Ende</th><th data-i18n="th.mb">MB</th><th data-i18n="th.proxy">Proxy</th><th data-i18n="th.status">Status</th><th data-i18n="th.action">Aktion</th></tr></thead>
         <tbody id="rec-tbody"></tbody>
       </table>
     </div>
@@ -2771,74 +2955,81 @@ _HTML = """<!DOCTYPE html>
 
   <div class="tab" id="tab-settings">
     <div class="card">
-      <div class="card-title" style="margin-bottom:12px">Erscheinungsbild</div>
+      <div class="card-title" style="margin-bottom:12px" data-i18n="settings.appearance">Erscheinungsbild</div>
       <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0">
         <div>
-          <div style="font-size:.85rem;font-weight:500">Theme</div>
-          <div class="help-text">Hell oder Dunkel &mdash; wie im e2proxy</div>
+          <div style="font-size:.85rem;font-weight:500" data-i18n="settings.theme">Theme</div>
+          <div class="help-text" data-i18n="settings.theme_desc">Hell oder Dunkel &mdash; wie im e2proxy</div>
         </div>
         <div style="display:flex;gap:6px">
-          <button class="btn btn-sm" id="theme-dark-btn" onclick="setTheme('dark')">&#127769; Dunkel</button>
-          <button class="btn btn-sm" id="theme-light-btn" onclick="setTheme('light')">&#9728; Hell</button>
+          <button class="btn btn-sm" id="theme-dark-btn" onclick="setTheme('dark')">&#127769; <span data-i18n="settings.dark">Dunkel</span></button>
+          <button class="btn btn-sm" id="theme-light-btn" onclick="setTheme('light')">&#9728; <span data-i18n="settings.light">Hell</span></button>
         </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid var(--border)">
+        <div>
+          <div style="font-size:.85rem;font-weight:500" data-i18n="settings.language">Sprache</div>
+          <div class="help-text" data-i18n="settings.language_desc">Sprache der Oberfl&auml;che &mdash; wie im e2proxy</div>
+        </div>
+        <select id="lang-sel" onchange="setLang(this.value)" style="width:auto;padding:4px 8px;font-size:.8rem"><option value="en">🇬🇧 EN</option><option value="de">🇩🇪 DE</option></select>
       </div>
     </div>
     <div class="card">
-      <div class="card-title" style="margin-bottom:12px">Proxies</div>
+      <div class="card-title" style="margin-bottom:12px" data-i18n="settings.proxies">Proxies</div>
       <div id="settings-proxies-list" style="margin-bottom:10px"></div>
       <div class="form-row">
-        <div><label>Proxy URL</label><input id="settings-proxy-url" type="text" placeholder="http://192.168.88.67:8888"></div>
-        <div><label>Name</label><input id="settings-proxy-name" type="text" placeholder="Wien"></div>
+        <div><label data-i18n="settings.proxy_url">Proxy URL</label><input id="settings-proxy-url" type="text" placeholder="http://192.168.88.67:8888"></div>
+        <div><label data-i18n="common.name">Name</label><input id="settings-proxy-name" type="text" placeholder="Wien"></div>
       </div>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-primary" onclick="addProxyFromSettings()">Hinzufuegen</button>
+        <button class="btn btn-primary" onclick="addProxyFromSettings()" data-i18n="common.add">Hinzufuegen</button>
         <button class="btn" onclick="runDiscovery()">&#8634; SSDP</button>
       </div>
     </div>
     <div class="card">
-      <div class="card-title" style="margin-bottom:16px">Aufnahmen</div>
+      <div class="card-title" style="margin-bottom:16px" data-i18n="settings.recordings">Aufnahmen</div>
       <div class="form-row">
         <div>
-          <label>Aufnahme-Unterordner (optional)</label>
-          <input id="cfg-recdir" type="text" placeholder="leer = e2proxy Standard-Pfad">
-          <div class="help-text">Leer = e2proxy schreibt in seinen eigenen Pfad. Optional: Unterordner relativ dazu, z.B. <code>Serien</code></div>
+          <label data-i18n="settings.subdir">Aufnahme-Unterordner (optional)</label>
+          <input id="cfg-recdir" type="text" data-i18n-ph="settings.subdir_ph" placeholder="leer = e2proxy Standard-Pfad">
+          <div class="help-text" data-i18n-html="settings.subdir_help">Leer = e2proxy schreibt in seinen eigenen Pfad. Optional: Unterordner relativ dazu, z.B. <code>Serien</code></div>
         </div>
         <div>
-          <label>Stream-Profil</label>
+          <label data-i18n="settings.profile">Stream-Profil</label>
           <select id="cfg-profile">
             <option value="remux-ac3">remux-ac3</option>
           </select>
-          <div class="help-text">Wird aus Proxy geladen</div>
+          <div class="help-text" data-i18n="settings.profile_help">Wird aus Proxy geladen</div>
         </div>
       </div>
       <div class="form-row">
-        <div><label>Pre-Buffer (Sek)</label><input id="cfg-pre" type="number" min="0" max="300"></div>
-        <div><label>Post-Buffer (Sek)</label><input id="cfg-post" type="number" min="0" max="600"></div>
+        <div><label data-i18n="settings.pre_buffer">Pre-Buffer (Sek)</label><input id="cfg-pre" type="number" min="0" max="300"></div>
+        <div><label data-i18n="settings.post_buffer">Post-Buffer (Sek)</label><input id="cfg-post" type="number" min="0" max="600"></div>
       </div>
     </div>
     <div class="card">
-      <div class="card-title" style="margin-bottom:16px">Aufraeum-Strategie</div>
+      <div class="card-title" style="margin-bottom:16px" data-i18n="settings.cleanup">Aufraeum-Strategie</div>
       <div class="form-row">
-        <div><label>Trigger</label>
+        <div><label data-i18n="settings.trigger">Trigger</label>
           <select id="cfg-cleanup" onchange="updateCleanupUi()">
-            <option value="on_new">Bei neuer Aufnahme</option>
-            <option value="daily">Taeglich</option>
-            <option value="never">Nie</option>
+            <option value="on_new" data-i18n="settings.trig_onnew">Bei neuer Aufnahme</option>
+            <option value="daily" data-i18n="settings.trig_daily">Taeglich</option>
+            <option value="never" data-i18n="settings.trig_never">Nie</option>
           </select>
         </div>
-        <div id="cleanup-hour-wrap"><label>Uhrzeit</label><input id="cfg-cleanup-hour" type="number" min="0" max="23"></div>
+        <div id="cleanup-hour-wrap"><label data-i18n="settings.hour">Uhrzeit</label><input id="cfg-cleanup-hour" type="number" min="0" max="23"></div>
       </div>
-      <div style="display:flex;gap:8px;margin-top:8px"><button class="btn btn-sm" onclick="triggerCleanupNow()">Keep-Last Cleanup</button><button class="btn btn-sm btn-danger" onclick="deduplicateDb()">Duplikate bereinigen</button></div>
+      <div style="display:flex;gap:8px;margin-top:8px"><button class="btn btn-sm" onclick="triggerCleanupNow()" data-i18n="settings.cleanup_now">Keep-Last Cleanup</button><button class="btn btn-sm btn-danger" onclick="deduplicateDb()" data-i18n="settings.dedup">Duplikate bereinigen</button></div>
     </div>
     <div class="card">
-      <div class="card-title" style="margin-bottom:16px">EPG &amp; TMDB</div>
+      <div class="card-title" style="margin-bottom:16px" data-i18n="settings.epg_tmdb">EPG &amp; TMDB</div>
       <div class="form-row">
-        <div><label>Scan-Intervall (Sek)</label><input id="cfg-epg-interval" type="number" min="300"></div>
-        <div><label>Vorschau (Stunden)</label><input id="cfg-epg-lookahead" type="number" min="2" max="168"></div>
+        <div><label data-i18n="settings.scan_interval">Scan-Intervall (Sek)</label><input id="cfg-epg-interval" type="number" min="300"></div>
+        <div><label data-i18n="settings.lookahead">Vorschau (Stunden)</label><input id="cfg-epg-lookahead" type="number" min="2" max="168"></div>
       </div>
       <div class="form-row">
-        <div><label>TMDB API Key</label><input id="cfg-tmdb-key" type="password"></div>
-        <div><label>TMDB Sprache</label>
+        <div><label data-i18n="settings.tmdb_key">TMDB API Key</label><input id="cfg-tmdb-key" type="password"></div>
+        <div><label data-i18n="settings.tmdb_lang">TMDB Sprache</label>
           <select id="cfg-tmdb-lang">
             <option value="de-DE">Deutsch</option>
             <option value="en-US">English</option>
@@ -2847,13 +3038,13 @@ _HTML = """<!DOCTYPE html>
       </div>
     </div>
     <div style="display:flex;justify-content:flex-end">
-      <button class="btn btn-primary" onclick="saveAllConfig()">Speichern</button>
+      <button class="btn btn-primary" onclick="saveAllConfig()" data-i18n="common.save">Speichern</button>
     </div>
 
     <!-- Logs in Settings -->
     <div class="card">
       <div class="card-header">
-        <span class="card-title">Logs</span>
+        <span class="card-title" data-i18n="settings.logs">Logs</span>
         <div style="display:flex;gap:6px;align-items:center">
           <select id="log-level" onchange="loadLogs()" style="width:auto;padding:4px 8px;font-size:.75rem">
             <option value="DEBUG">DEBUG</option>
@@ -2866,7 +3057,7 @@ _HTML = """<!DOCTYPE html>
       </div>
       <div id="log-container" style="max-height:300px;overflow-y:auto;background:var(--bg);border-radius:5px;padding:10px;font-family:'JetBrains Mono',monospace;font-size:.72rem"></div>
       <div style="margin-top:10px">
-        <div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--muted);margin-bottom:6px">LOG-DATEIEN</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--muted);margin-bottom:6px" data-i18n="settings.log_files">LOG-DATEIEN</div>
         <div id="log-files-list" style="font-size:.75rem;color:var(--muted);font-family:'JetBrains Mono',monospace"></div>
       </div>
     </div>
@@ -2874,7 +3065,7 @@ _HTML = """<!DOCTYPE html>
     <!-- Tuner History -->
     <div class="card">
       <div class="card-header">
-        <span class="card-title">Tuner-History</span>
+        <span class="card-title" data-i18n="settings.tuner_history">Tuner-History</span>
         <button class="btn btn-sm" onclick="loadTunerHistory()">&#8635;</button>
       </div>
       <div id="tuner-history-container" style="max-height:280px;overflow-y:auto"></div>
@@ -2882,8 +3073,8 @@ _HTML = """<!DOCTYPE html>
 
     <!-- Log-Level Steuerung -->
     <div class="card">
-      <div class="card-title" style="margin-bottom:12px">Log-Level</div>
-      <p style="font-size:.78rem;color:var(--muted);margin-bottom:10px">
+      <div class="card-title" style="margin-bottom:12px" data-i18n="settings.log_level">Log-Level</div>
+      <p style="font-size:.78rem;color:var(--muted);margin-bottom:10px" data-i18n="settings.log_level_desc">
         DEBUG zeigt alle internen Abläufe — ideal für Troubleshooting.
         Nach der Diagnose wieder auf INFO setzen.
       </p>
@@ -2895,19 +3086,178 @@ _HTML = """<!DOCTYPE html>
       </div>
       <div id="log-level-status" style="font-size:.72rem;font-family:'JetBrains Mono',monospace;color:var(--muted);margin-bottom:10px"></div>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <label style="margin:0;white-space:nowrap">Log-Dateien aufbewahren:</label>
+        <label style="margin:0;white-space:nowrap" data-i18n="settings.log_retention">Log-Dateien aufbewahren:</label>
         <input id="cfg-log-retention" type="number" min="1" max="365"
           style="width:80px;padding:4px 8px;font-size:.82rem">
-        <span style="font-size:.78rem;color:var(--muted)">Tage</span>
+        <span style="font-size:.78rem;color:var(--muted)" data-i18n="common.days">Tage</span>
       </div>
-      <div class="help-text">Logs liegen in <code>/data/logs/</code> — täglich rotiert</div>
+      <div class="help-text" data-i18n-html="settings.log_path_help">Logs liegen in <code>/data/logs/</code> — täglich rotiert</div>
       <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid var(--border)">
         <div>
-          <div style="font-size:.82rem;font-weight:500">API-Call Logging</div>
-          <div class="help-text">Loggt jeden Request/Response zum e2proxy — nur für Troubleshooting einschalten</div>
+          <div style="font-size:.82rem;font-weight:500" data-i18n="settings.api_log">API-Call Logging</div>
+          <div class="help-text" data-i18n="settings.api_log_desc">Loggt jeden Request/Response zum e2proxy — nur für Troubleshooting einschalten</div>
         </div>
-        <button id="api-log-btn" class="btn btn-sm" onclick="toggleApiLogging()">Ein</button>
+        <button id="api-log-btn" class="btn btn-sm" onclick="toggleApiLogging()" data-i18n="proxy.on">Ein</button>
       </div>
+    </div>
+  </div>
+
+  <div class="tab" id="tab-help">
+    <div class="version-badge">v{VERSION}</div>
+    <div class="help-grid">
+
+      <div class="card">
+        <div class="card-title" data-i18n="help.h_overview">Overview</div>
+        <p data-i18n-html="help.overview">Zeigt alle Sender als horizontale Zeitachse. Blaue Blöcke = geplante Aufnahmen, Grün = läuft.<br><br>
+        <strong>Klick auf Slot:</strong> Einmalig aufnehmen oder als Serie einplanen. Auch Slots ohne EPG-Beschreibung sind klickbar.<br><br>
+        <strong>Hover:</strong> Titel, Zeit, Beschreibung. Bei geplanten Aufnahmen: "Auslassen"-Button.<br><br>
+        <strong>EPG-Scan:</strong> Lädt frische Daten vom e2proxy, läuft automatisch stündlich.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title" data-i18n="help.h_series">Serien &amp; Filme</div>
+        <p data-i18n-html="help.series"><strong>Typ:</strong> Bei jeder Aufnahme wählst du Film &#127909; oder Serie &#128250;.
+        Beeinflusst Pfad/Library in Plex (Movies vs. TV Shows) und .nfo Format.<br><br>
+        <strong>Modus:</strong> Bei Serien zusätzlich "nur diese Folge" oder "alle Folgen".<br><br>
+        <strong>Regex-Pattern</strong> bestimmt welche EPG-Titel aufgenommen werden (case-insensitive):<br>
+        <code>Die Geissens</code> alle Folgen &bull;
+        <code>GNTM|Germany.s Next Topmodel</code> beide Schreibweisen &bull;
+        <code>^Tatort</code> nur Titel die mit Tatort beginnen<br><br>
+        <strong>Pre/Post-Offset (Sek.):</strong> Pro Serie konfigurierbar. Manche Sender starten ihre Sendungen
+        regelmäßig 30s früher oder enden später. Positive Werte = früher starten / länger laufen.<br><br>
+        <strong>Back-to-Back:</strong> Folgt eine Aufnahme direkt auf eine andere auf dem gleichen Sender
+        (≤60s Lücke), startet sie automatisch 2 Minuten früher — vermeidet Time-Drift.<br><br>
+        <strong>Keep Last:</strong> Behält nur die letzten N Aufnahmen, ältere werden automatisch gelöscht (inkl. .nfo). 0 = alle.<br><br>
+        <strong>TMDB-Suche:</strong> Liefert deutschen Titel, Aliases und Regex-Vorschlag.<br><br>
+        <strong>Duplikat-Schutz:</strong> Gleicher Name + Sender kann nicht doppelt angelegt werden.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title" data-i18n="help.h_recordings">Aufnahmen</div>
+        <p data-i18n-html="help.recordings">Sortierbar nach Datum, Serie, Titel, Status. Filterbar nach Status.<br><br>
+        <strong>Status:</strong> Geplant · <span style="color:var(--accent2)">Läuft</span> · <span style="color:var(--green)">Fertig</span> · <span style="color:var(--red)">Fehler</span> · <span style="color:var(--yellow)">Verpasst</span> · Ausgelassen<br><br>
+        <strong>&#128269; Detail:</strong> Dateipfad, Größe, Proxy, Quelle (epg-scheduler / ui-quickrecord).<br><br>
+        <strong>&#9654; Play:</strong> Aufnahme im Browser abspielen (benötigt <code>/recording/stream</code> im e2proxy).<br><br>
+        <strong>Rescan:</strong> Prüft Proxy-Status + Dateisystem, aktualisiert fehlende Dateien.<br><br>
+        <strong>Fehler löschen:</strong> Entfernt alle Einträge mit Status Fehler, Verpasst, Ausgelassen und fehlenden Dateien.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title" data-i18n="help.h_settings">Settings</div>
+        <p data-i18n-html="help.settings"><strong>Proxies:</strong> SSDP-Discovery oder manuelle URL. Mehrere Proxies möglich — der mit den meisten freien Tunern wird automatisch gewählt.<br><br>
+        <strong>Stream-Profil:</strong> Wird aus e2proxy geladen. Empfohlen: <code>remux-ac3</code>.<br><br>
+        <strong>Pre/Post-Buffer:</strong> Sekunden vor/nach EPG-Zeit für ungenaue Sendezeiten.<br><br>
+        <strong>Aufräum-Trigger:</strong> "Bei neuer Aufnahme" empfohlen.<br><br>
+        <strong>TMDB API Key:</strong> Kostenlos unter themoviedb.org.<br><br>
+        <strong>API-Call Logging:</strong> Loggt jeden Request/Response zum e2proxy — nur für Troubleshooting, kombinieren mit Log-Level DEBUG.</p>
+      </div>
+
+      <div class="card help-grid-full">
+        <div class="card-title" data-i18n="help.h_tech">Technische Details &amp; Raspberry Pi Hinweise</div>
+        <p data-i18n-html="help.tech"><strong>Aufnahme-Lifecycle:</strong> EPG-Scan → Regex-Match → "Geplant". Kurz vor Sendestart: Proxy mit freiem Tuner wählen → <code>POST /api/record/start</code> → Dateipfad aus Response. Watchdog alle 30s via <code>GET /api/record/status</code> → bei Fertig: expliziter Stop für Tuner-Freigabe.<br><br>
+        <strong>Kein eigenes ffmpeg:</strong> Alle Aufnahmen laufen im e2proxy. Speicherort wird vom e2proxy bestimmt (<code>recordings_path</code>).<br><br>
+        <strong>Daten:</strong> <code>~/e2recorder/data/</code> — config.json, series.json, recordings.json, tuner_history.json.<br><br>
+        <strong style="color:var(--red)">&#9888; Raspberry Pi — Netzteil &amp; Kabel:</strong>
+        Unter Last kann der Pi bei schlechter Stromversorgung einfrieren (Symptom: <code>hwmon: Undervoltage detected!</code> in dmesg).<br>
+        &bull; <strong>Netzteil:</strong> Mindestens 27W USB-C (5V/5A) — z.B. Anker Nano II 65W &#10003;<br>
+        &bull; <strong>Kabel:</strong> Kurzes, dickes USB-C Kabel — dünne/lange Kabel verursachen Spannungsabfall unter Last<br>
+        Prüfen: <code>vcgencmd get_throttled</code> → sollte <code>0x0</code> zurückgeben</p>
+      </div>
+
+      <div class="card help-grid-full">
+        <div class="card-title" data-i18n="help.h_changelog">Changelog</div>
+
+        <div class="cl-entry cl-current">
+          <b style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent2)">v1.4.1</b>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">2026-06-16</span>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">Hilfe als Tab · Sprache in Einstellungen</span>
+          <div style="font-size:11px;margin-top:4px;color:var(--muted)">
+            Hilfe &amp; Changelog jetzt als integrierter Tab in der gleichen Seite (kein separates Fenster mehr) — gleiches Design.
+            Sprachauswahl in die Einstellungen verschoben (wie im e2proxy), direkt unter der Theme-Auswahl.
+          </div>
+        </div>
+
+        <div class="cl-entry cl-old">
+          <b style="font-family:'JetBrains Mono',monospace;font-size:11px">v1.4.0</b>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">2026-06-16</span>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">Mehrsprachige UI (EN/DE)</span>
+          <div style="font-size:11px;margin-top:4px;color:var(--muted)">
+            Komplette WebUI jetzt zweisprachig (Englisch/Deutsch) mit clientseitiger i18n ohne Server-Roundtrip.
+            Sprachauswahl wird in localStorage gespeichert. Hilfe-Seite ebenfalls übersetzt.
+          </div>
+        </div>
+
+        <div class="cl-entry cl-old">
+          <b style="font-family:'JetBrains Mono',monospace;font-size:11px">v1.3.2</b>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">2026-06-16</span>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">Fix: "Auslassen"-Button erscheint wieder</span>
+          <div style="font-size:11px;margin-top:4px;color:var(--muted)">
+            Behoben: Bei Serien mit Doppelpunkt-Sender-Ref (z.B. First Dates) fehlte der "Diese Aufnahme auslassen"-Button im EPG-Tooltip.
+            Ursache war ein Format-Mismatch (':' vs. '_') im internen Event-Key — jetzt normalisiert.
+          </div>
+        </div>
+
+        <div class="cl-entry cl-old">
+          <b style="font-family:'JetBrains Mono',monospace;font-size:11px">v1.3.1</b>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">2026-06-16</span>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">Tooltip-Fix · Auto-Close · Button-Text</span>
+          <div style="font-size:11px;margin-top:4px;color:var(--muted)">
+            EPG-Tooltip wird jetzt korrekt im Viewport positioniert — der "Auslassen"-Button bleibt auch bei langer Beschreibung sichtbar,
+            Quick-Record Dialog schließt sich automatisch nach dem Einplanen,
+            Button-Text generisch "Diese Aufnahme auslassen" (auch für Filme)
+          </div>
+        </div>
+
+        <div class="cl-entry cl-old">
+          <b style="font-family:'JetBrains Mono',monospace;font-size:11px">v1.3.0</b>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">2026-06-16</span>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">Getrennte Tabs Serien/Filme · Cache-Control</span>
+          <div style="font-size:11px;margin-top:4px;color:var(--muted)">
+            Eigene Tabs für Serien und Filme (statt kombiniert mit Filter),
+            "+ Neu" öffnet jeweils den passenden Typ vorausgewählt,
+            Cache-Control Header für die UI (kein veraltetes UI mehr aus dem Browser-Cache)
+          </div>
+        </div>
+
+        <div class="cl-entry cl-old">
+          <b style="font-family:'JetBrains Mono',monospace;font-size:11px">v1.2.0</b>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">2026-06-15</span>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">Filme/Serien · Pre/Post-Offsets · Back-to-Back · Channel-Fix</span>
+          <div style="font-size:11px;margin-top:4px;color:var(--muted)">
+            Movie/Series Typ-Auswahl im Quick-Record Modal,
+            Pre-/Post-Offset Sekunden pro Serie konfigurierbar (für Sender die früher/später anfangen),
+            Back-to-Back Erkennung auf gleichem Sender → 2 Min früher starten,
+            Filter "Nur Serien"/"Nur Filme" im Serien-Tab,
+            Channel-Selector Fix (Refs mit _ und : werden gematcht),
+            year-Feld für Filme (für Plex Movie-Titel),
+            erweiterte e2proxy v3.2 API mit kind/season/episode
+          </div>
+        </div>
+
+        <div class="cl-entry cl-old">
+          <b style="font-family:'JetBrains Mono',monospace;font-size:11px">v1.1.0</b>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">2026-06-10</span>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">/api/health · Receiver Tracking · File Logging · Intelligentes Tuner-Wait</span>
+          <div style="font-size:11px;margin-top:4px;color:var(--muted)">
+            /api/health für schnellere Proxy-Erkennung, Receiver-Tracking,
+            Intelligentes Warten via remaining_sec, File-Logging mit täglicher Rotation,
+            API-Call Logging Toggle, einmalige Aufnahmen (once=True)
+          </div>
+        </div>
+
+        <div class="cl-entry cl-old">
+          <b style="font-family:'JetBrains Mono',monospace;font-size:11px">v1.0.0</b>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">2026-06-09</span>
+          <span style="color:var(--muted);font-size:10px;margin-left:8px">Erster stabiler Release · Docker · Recording · EPG · UI</span>
+          <div style="font-size:11px;margin-top:4px;color:var(--muted)">
+            Serien-Aufnahme-Scheduler via e2proxy API, EPG-Grid, TMDB, SSDP-Discovery,
+            Multi-Proxy, Keep-Last-Cleanup, Docker (python:3.11-slim), Tuner-History,
+            Duplikat-Schutz für Serien, Netzteil/Kabel Warnung
+          </div>
+        </div>
+
+      </div>
+
     </div>
   </div>
 
@@ -2919,59 +3269,59 @@ _HTML = """<!DOCTYPE html>
   <input type="hidden" id="edit-id">
   <div class="form-row one" style="margin-bottom:8px">
     <div>
-      <label>TMDB-Suche (optional)</label>
+      <label data-i18n="modal.tmdb">TMDB-Suche (optional)</label>
       <div style="display:flex;gap:8px">
-        <input id="tmdb-query" type="text" placeholder="Serienname suchen...">
-        <button class="btn btn-sm" onclick="doTmdbSearch()" style="white-space:nowrap">Suchen</button>
+        <input id="tmdb-query" type="text" data-i18n-ph="modal.tmdb_ph" placeholder="Serienname suchen...">
+        <button class="btn btn-sm" onclick="doTmdbSearch()" style="white-space:nowrap" data-i18n="common.search">Suchen</button>
       </div>
     </div>
   </div>
   <div id="tmdb-results" class="tmdb-results" style="display:none"></div>
   <hr style="margin:16px 0">
-  <div class="form-row one"><div><label>Serienname</label><input id="s-name" type="text"></div></div>
+  <div class="form-row one"><div><label data-i18n="modal.name">Serienname</label><input id="s-name" type="text"></div></div>
   <div style="margin-bottom:12px">
-    <label>Sender</label>
+    <label data-i18n="modal.channel">Sender</label>
     <select id="s-ch-select" onchange="onChannelSelect(this)" style="width:100%">
-      <option value="">-- Sender waehlen --</option>
+      <option value="" data-i18n="modal.choose_channel">-- Sender waehlen --</option>
     </select>
     <input type="hidden" id="s-ch-ref"><input type="hidden" id="s-ch-name">
   </div>
   <div class="form-row one">
     <div>
-      <label>Regex-Pattern</label>
+      <label data-i18n="modal.regex">Regex-Pattern</label>
       <input id="s-regex" type="text" oninput="updateRegexPreview()">
-      <div class="help-text">z.B. <code>GNTM|Germany.s Next Topmodel</code> &#183; <code>^Zwischen Tuell</code></div>
+      <div class="help-text" data-i18n-html="modal.regex_help">z.B. <code>GNTM|Germany.s Next Topmodel</code> &#183; <code>^Zwischen Tuell</code></div>
       <div id="regex-preview" class="regex-preview" style="display:none"></div>
     </div>
   </div>
   <div class="form-row">
-    <div><label>Typ</label>
+    <div><label data-i18n="modal.type">Typ</label>
       <select id="s-kind">
-        <option value="series">Serie</option>
-        <option value="movie">Film</option>
+        <option value="series" data-i18n="modal.type_series">Serie</option>
+        <option value="movie" data-i18n="modal.type_movie">Film</option>
       </select>
     </div>
-    <div><label>Aktiv</label><select id="s-enabled"><option value="true">Ja</option><option value="false">Nein</option></select></div>
+    <div><label data-i18n="modal.active">Aktiv</label><select id="s-enabled"><option value="true" data-i18n="common.yes">Ja</option><option value="false" data-i18n="common.no">Nein</option></select></div>
   </div>
   <div class="form-row">
-    <div><label>Keep Last (0=alle)</label><input id="s-keep" type="number" min="0" value="0"></div>
-    <div><label>Jahr (für Filme)</label><input id="s-year" type="number" min="1900" max="2099" placeholder="z.B. 2018"></div>
+    <div><label data-i18n="modal.keep">Keep Last (0=alle)</label><input id="s-keep" type="number" min="0" value="0"></div>
+    <div><label data-i18n="modal.year">Jahr (für Filme)</label><input id="s-year" type="number" min="1900" max="2099" data-i18n-ph="modal.year_ph" placeholder="z.B. 2018"></div>
   </div>
   <div class="form-row">
     <div>
-      <label>Aufnahme früher starten (Sek.)</label>
+      <label data-i18n="modal.pre">Aufnahme früher starten (Sek.)</label>
       <input id="s-pre" type="number" min="-600" max="600" value="0">
-      <div class="help-text">Positiv = früher starten, negativ = später</div>
+      <div class="help-text" data-i18n="modal.pre_help">Positiv = früher starten, negativ = später</div>
     </div>
     <div>
-      <label>Aufnahme länger laufen (Sek.)</label>
+      <label data-i18n="modal.post">Aufnahme länger laufen (Sek.)</label>
       <input id="s-post" type="number" min="-600" max="600" value="0">
-      <div class="help-text">Positiv = länger laufen, negativ = früher beenden</div>
+      <div class="help-text" data-i18n="modal.post_help">Positiv = länger laufen, negativ = früher beenden</div>
     </div>
   </div>
   <div class="actions">
-    <button class="btn" onclick="closeModal()">Schliessen</button>
-    <button class="btn btn-primary" onclick="saveSerie()">Speichern</button>
+    <button class="btn" onclick="closeModal()" data-i18n="common.close">Schliessen</button>
+    <button class="btn btn-primary" onclick="saveSerie()" data-i18n="common.save">Speichern</button>
   </div>
 </div>
 </div>
@@ -3015,12 +3365,14 @@ code{{font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--accent
 .cl-old{{border-left:3px solid var(--border);padding-left:14px}}
 </style>
 <script>(function(){{var t=localStorage.getItem('e2recorder-theme');if(t==='light')document.documentElement.setAttribute('data-theme','light');}})();</script>
+{I18N_JS}
 </head>
 <body>
 <header>
   <div class="logo">e2<span>recorder</span></div>
-  <span style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--muted);margin-left:8px">Hilfe &amp; Changelog</span>
-  <a href="/" class="back-btn">&#8592; Zurück</a>
+  <span style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--muted);margin-left:8px" data-i18n="help.subtitle">Hilfe &amp; Changelog</span>
+  <select id="lang-sel" onchange="setLang(this.value)" style="margin-left:auto;width:auto;padding:4px 8px;font-size:.75rem;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px"><option value="en">🇬🇧 EN</option><option value="de">🇩🇪 DE</option></select>
+  <a href="/" class="back-btn" style="margin-left:10px" data-i18n="help.back">&#8592; Zurück</a>
 </header>
 <div class="container">
   <div class="version-badge">v{VERSION}</div>
@@ -3028,16 +3380,16 @@ code{{font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--accent
   <div class="grid">
 
     <div class="card">
-      <div class="card-title">Overview</div>
-      <p>Zeigt alle Sender als horizontale Zeitachse. Blaue Blöcke = geplante Aufnahmen, Grün = läuft.<br><br>
+      <div class="card-title" data-i18n="help.h_overview">Overview</div>
+      <p data-i18n-html="help.overview">Zeigt alle Sender als horizontale Zeitachse. Blaue Blöcke = geplante Aufnahmen, Grün = läuft.<br><br>
       <strong>Klick auf Slot:</strong> Einmalig aufnehmen oder als Serie einplanen. Auch Slots ohne EPG-Beschreibung sind klickbar.<br><br>
       <strong>Hover:</strong> Titel, Zeit, Beschreibung. Bei geplanten Aufnahmen: "Auslassen"-Button.<br><br>
       <strong>EPG-Scan:</strong> Lädt frische Daten vom e2proxy, läuft automatisch stündlich.</p>
     </div>
 
     <div class="card">
-      <div class="card-title">Serien &amp; Filme</div>
-      <p><strong>Typ:</strong> Bei jeder Aufnahme wählst du Film &#127909; oder Serie &#128250;.
+      <div class="card-title" data-i18n="help.h_series">Serien &amp; Filme</div>
+      <p data-i18n-html="help.series"><strong>Typ:</strong> Bei jeder Aufnahme wählst du Film &#127909; oder Serie &#128250;.
       Beeinflusst Pfad/Library in Plex (Movies vs. TV Shows) und .nfo Format.<br><br>
       <strong>Modus:</strong> Bei Serien zusätzlich "nur diese Folge" oder "alle Folgen".<br><br>
       <strong>Regex-Pattern</strong> bestimmt welche EPG-Titel aufgenommen werden (case-insensitive):<br>
@@ -3054,8 +3406,8 @@ code{{font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--accent
     </div>
 
     <div class="card">
-      <div class="card-title">Aufnahmen</div>
-      <p>Sortierbar nach Datum, Serie, Titel, Status. Filterbar nach Status.<br><br>
+      <div class="card-title" data-i18n="help.h_recordings">Aufnahmen</div>
+      <p data-i18n-html="help.recordings">Sortierbar nach Datum, Serie, Titel, Status. Filterbar nach Status.<br><br>
       <strong>Status:</strong> Geplant · <span style="color:var(--accent2)">Läuft</span> · <span style="color:var(--green)">Fertig</span> · <span style="color:var(--red)">Fehler</span> · <span style="color:var(--yellow)">Verpasst</span> · Ausgelassen<br><br>
       <strong>&#128269; Detail:</strong> Dateipfad, Größe, Proxy, Quelle (epg-scheduler / ui-quickrecord).<br><br>
       <strong>&#9654; Play:</strong> Aufnahme im Browser abspielen (benötigt <code>/recording/stream</code> im e2proxy).<br><br>
@@ -3064,8 +3416,8 @@ code{{font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--accent
     </div>
 
     <div class="card">
-      <div class="card-title">Settings</div>
-      <p><strong>Proxies:</strong> SSDP-Discovery oder manuelle URL. Mehrere Proxies möglich — der mit den meisten freien Tunern wird automatisch gewählt.<br><br>
+      <div class="card-title" data-i18n="help.h_settings">Settings</div>
+      <p data-i18n-html="help.settings"><strong>Proxies:</strong> SSDP-Discovery oder manuelle URL. Mehrere Proxies möglich — der mit den meisten freien Tunern wird automatisch gewählt.<br><br>
       <strong>Stream-Profil:</strong> Wird aus e2proxy geladen. Empfohlen: <code>remux-ac3</code>.<br><br>
       <strong>Pre/Post-Buffer:</strong> Sekunden vor/nach EPG-Zeit für ungenaue Sendezeiten.<br><br>
       <strong>Aufräum-Trigger:</strong> "Bei neuer Aufnahme" empfohlen.<br><br>
@@ -3074,8 +3426,8 @@ code{{font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--accent
     </div>
 
     <div class="card grid-full">
-      <div class="card-title">Technische Details &amp; Raspberry Pi Hinweise</div>
-      <p><strong>Aufnahme-Lifecycle:</strong> EPG-Scan → Regex-Match → "Geplant". Kurz vor Sendestart: Proxy mit freiem Tuner wählen → <code>POST /api/record/start</code> → Dateipfad aus Response. Watchdog alle 30s via <code>GET /api/record/status</code> → bei Fertig: expliziter Stop für Tuner-Freigabe.<br><br>
+      <div class="card-title" data-i18n="help.h_tech">Technische Details &amp; Raspberry Pi Hinweise</div>
+      <p data-i18n-html="help.tech"><strong>Aufnahme-Lifecycle:</strong> EPG-Scan → Regex-Match → "Geplant". Kurz vor Sendestart: Proxy mit freiem Tuner wählen → <code>POST /api/record/start</code> → Dateipfad aus Response. Watchdog alle 30s via <code>GET /api/record/status</code> → bei Fertig: expliziter Stop für Tuner-Freigabe.<br><br>
       <strong>Kein eigenes ffmpeg:</strong> Alle Aufnahmen laufen im e2proxy. Speicherort wird vom e2proxy bestimmt (<code>recordings_path</code>).<br><br>
       <strong>Daten:</strong> <code>~/e2recorder/data/</code> — config.json, series.json, recordings.json, tuner_history.json.<br><br>
       <strong style="color:var(--red)">&#9888; Raspberry Pi — Netzteil &amp; Kabel:</strong>
@@ -3086,10 +3438,62 @@ code{{font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--accent
     </div>
 
     <div class="card grid-full">
-      <div class="card-title">Changelog</div>
+      <div class="card-title" data-i18n="help.h_changelog">Changelog</div>
 
       <div class="cl-entry cl-current">
-        <b style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent2)">v1.2.0</b>
+        <b style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent2)">v1.4.1</b>
+        <span style="color:var(--muted);font-size:10px;margin-left:8px">2026-06-16</span>
+        <span style="color:var(--muted);font-size:10px;margin-left:8px">Hilfe als Tab · Sprache in Einstellungen</span>
+        <div style="font-size:11px;margin-top:4px;color:var(--muted)">
+          Hilfe &amp; Changelog jetzt als integrierter Tab in der gleichen Seite (kein separates Fenster mehr) — gleiches Design.
+          Sprachauswahl in die Einstellungen verschoben (wie im e2proxy), direkt unter der Theme-Auswahl.
+        </div>
+      </div>
+
+      <div class="cl-entry cl-old">
+        <b style="font-family:'JetBrains Mono',monospace;font-size:11px">v1.4.0</b>
+        <span style="color:var(--muted);font-size:10px;margin-left:8px">2026-06-16</span>
+        <span style="color:var(--muted);font-size:10px;margin-left:8px">Mehrsprachige UI (EN/DE)</span>
+        <div style="font-size:11px;margin-top:4px;color:var(--muted)">
+          Komplette WebUI jetzt zweisprachig (Englisch/Deutsch) mit clientseitiger i18n ohne Server-Roundtrip.
+          Auswahl wird in localStorage gespeichert. Hilfe-Seite ebenfalls übersetzt.
+        </div>
+      </div>
+
+      <div class="cl-entry cl-old">
+        <b style="font-family:'JetBrains Mono',monospace;font-size:11px">v1.3.2</b>
+        <span style="color:var(--muted);font-size:10px;margin-left:8px">2026-06-16</span>
+        <span style="color:var(--muted);font-size:10px;margin-left:8px">Fix: "Auslassen"-Button erscheint wieder</span>
+        <div style="font-size:11px;margin-top:4px;color:var(--muted)">
+          Behoben: Bei Serien mit Doppelpunkt-Sender-Ref (z.B. First Dates) fehlte der "Diese Aufnahme auslassen"-Button im EPG-Tooltip.
+          Ursache war ein Format-Mismatch (':' vs. '_') im internen Event-Key — jetzt normalisiert.
+        </div>
+      </div>
+
+      <div class="cl-entry cl-old">
+        <b style="font-family:'JetBrains Mono',monospace;font-size:11px">v1.3.1</b>
+        <span style="color:var(--muted);font-size:10px;margin-left:8px">2026-06-16</span>
+        <span style="color:var(--muted);font-size:10px;margin-left:8px">Tooltip-Fix · Auto-Close · Button-Text</span>
+        <div style="font-size:11px;margin-top:4px;color:var(--muted)">
+          EPG-Tooltip wird jetzt korrekt im Viewport positioniert — der "Auslassen"-Button bleibt auch bei langer Beschreibung sichtbar,
+          Quick-Record Dialog schließt sich automatisch nach dem Einplanen,
+          Button-Text generisch "Diese Aufnahme auslassen" (auch für Filme)
+        </div>
+      </div>
+
+      <div class="cl-entry cl-old">
+        <b style="font-family:'JetBrains Mono',monospace;font-size:11px">v1.3.0</b>
+        <span style="color:var(--muted);font-size:10px;margin-left:8px">2026-06-16</span>
+        <span style="color:var(--muted);font-size:10px;margin-left:8px">Getrennte Tabs Serien/Filme · Cache-Control</span>
+        <div style="font-size:11px;margin-top:4px;color:var(--muted)">
+          Eigene Tabs für Serien und Filme (statt kombiniert mit Filter),
+          "+ Neu" öffnet jeweils den passenden Typ vorausgewählt,
+          Cache-Control Header für die UI (kein veraltetes UI mehr aus dem Browser-Cache)
+        </div>
+      </div>
+
+      <div class="cl-entry cl-old">
+        <b style="font-family:'JetBrains Mono',monospace;font-size:11px">v1.2.0</b>
         <span style="color:var(--muted);font-size:10px;margin-left:8px">2026-06-15</span>
         <span style="color:var(--muted);font-size:10px;margin-left:8px">Filme/Serien · Pre/Post-Offsets · Back-to-Back · Channel-Fix</span>
         <div style="font-size:11px;margin-top:4px;color:var(--muted)">
@@ -3134,7 +3538,7 @@ code{{font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--accent
 
 
 def render_ui():
-    return _HTML.replace("{CSS}", _CSS).replace("{JS}", _JS)
+    return _HTML.replace("{CSS}", _CSS).replace("{I18N}", I18N_JS).replace("{VERSION}", VERSION).replace("{JS}", _JS)
 
 
 # ── HTTP Handler ───────────────────────────────────────────────────────────
@@ -3155,6 +3559,9 @@ def _html(handler, html):
     handler.send_response(200)
     handler.send_header("Content-Type","text/html; charset=utf-8")
     handler.send_header("Content-Length", len(body))
+    handler.send_header("Cache-Control","no-cache, no-store, must-revalidate")
+    handler.send_header("Pragma","no-cache")
+    handler.send_header("Expires","0")
     handler.end_headers()
     handler.wfile.write(body)
 
