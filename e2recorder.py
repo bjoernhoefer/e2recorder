@@ -48,7 +48,7 @@ DATA_DIR        = os.environ.get("E2REC_DATA_DIR", "/data")
 CONFIG_FILE     = f"{DATA_DIR}/config.json"
 
 # ── Version ────────────────────────────────────────────────────────────────
-VERSION = "1.4.1+807e355d"   # i18n-Feinschliff: Sprachauswahl in Einstellungen, Hilfe als integrierter Tab
+VERSION = "1.4.1+94ccd5e4"   # Fix: Senderliste wird nach EPG-Scan und beim Seitenstart aktualisiert
 SERIES_FILE     = f"{DATA_DIR}/series.json"
 RECORDINGS_FILE = f"{DATA_DIR}/recordings.json"
 HISTORY_FILE    = f"{DATA_DIR}/tuner_history.json"
@@ -1693,7 +1693,8 @@ function renderPlan() {
   let rows = '';
   for (const ch of _scheduleData) {
     const evs = ch.events.filter(e => e.stop > winStart && e.start < winEnd);
-    if (!evs.length) continue;
+    // Sender ohne EPG (z.B. neu hinzugefügt) trotzdem als leere Zeile zeigen
+    if (!evs.length && !ch.no_epg) continue;
     const logo = ch.logo
       ? `<img class="plan-ch-logo" src="${escHtml(ch.logo)}" alt="" onerror="this.style.display='none'">`
       : '';
@@ -1701,6 +1702,9 @@ function renderPlan() {
     const displayName = ch.channel_name || _chNameById(ch.channel_id) || ch.channel_id;
     const label = `<div class="plan-ch-label"><div class="plan-ch-label-inner">${logo}<span class="plan-ch-name">${escHtml(displayName)}</span></div></div>`;
     let slots = `<div style="position:relative;height:40px;min-width:${totalPx}px">${nowLine}`;
+    if (!evs.length) {
+      slots += `<div style="position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--muted);font-style:italic">${t('plan.no_epg')}</div>`;
+    }
     for (const ev of evs) {
       const s = Math.max(ev.start, winStart);
       const e = Math.min(ev.stop, winEnd);
@@ -1808,8 +1812,15 @@ async function triggerScan(btn) {
     const s = await fetch('/api/status').then(r => r.json());
     if (!s.scan_status?.running) break;
   }
+  await refreshChannels();
   await loadPlan();
   if (btn) { btn.innerHTML = '&#8635; ' + t('plan.scan'); btn.disabled = false; }
+}
+
+async function refreshChannels() {
+  // Senderliste (Favoriten) neu vom Proxy holen, damit neue/geänderte Sender
+  // sofort in Plan-Anzeige und Auswahl-Dropdown erscheinen.
+  try { _channels = await fetch('/api/channels').then(r => r.json()); } catch(e) {}
 }
 
 async function quickRecord(ev, chName, chRef) {
@@ -2678,6 +2689,7 @@ function statusBadge(s) {
 // Safe init - catch any startup errors
 (async () => {
   try { await loadStatus(); } catch(e) { console.warn('loadStatus:', e); }
+  try { await refreshChannels(); } catch(e) { console.warn('refreshChannels:', e); }
   try { await loadPlan(); }   catch(e) { console.warn('loadPlan:', e); }
 })();
 setInterval(loadStatus, 20000);
@@ -2700,7 +2712,7 @@ I18N_JS = r"""<script>
       "hdr.proxy_connected":"{n} proxy connected","hdr.no_proxy":"no proxy — settings",
       "plan.title":"Recording Plan","plan.scan":"EPG Scan","plan.loading":"Loading...",
       "plan.legend_rec":"Will be recorded","plan.legend_live":"Now live","plan.legend_other":"Other program",
-      "plan.empty_noepg":"No EPG data — click EPG Scan","plan.empty_window":"No programs in time window",
+      "plan.empty_noepg":"No EPG data — click EPG Scan","plan.empty_window":"No programs in time window","plan.no_epg":"No EPG data yet",
       "tt.no_title":"(no title)","tt.no_desc":"No description available","tt.recording":"recording ({n})","tt.click_record":"Click to record","tt.skip":"Skip this recording",
       "qr.movie":"Movie","qr.series":"Series","qr.rec_movie":"Record movie","qr.movie_note":"Imported as a movie into the Plex Movies library",
       "qr.this_episode":"Only this episode","qr.once_note":"One-time recording of this single episode",
@@ -2747,7 +2759,7 @@ I18N_JS = r"""<script>
       "hdr.proxy_connected":"{n} Proxy verbunden","hdr.no_proxy":"kein proxy — settings",
       "plan.title":"Aufnahmeplan","plan.scan":"EPG-Scan","plan.loading":"Laedt...",
       "plan.legend_rec":"Wird aufgenommen","plan.legend_live":"Laeuft gerade","plan.legend_other":"Sonstiges Programm",
-      "plan.empty_noepg":"Keine EPG-Daten — EPG-Scan klicken","plan.empty_window":"Keine Sendungen im Zeitfenster",
+      "plan.empty_noepg":"Keine EPG-Daten — EPG-Scan klicken","plan.empty_window":"Keine Sendungen im Zeitfenster","plan.no_epg":"Noch keine EPG-Daten",
       "tt.no_title":"(kein Titel)","tt.no_desc":"Keine Beschreibung verfügbar","tt.recording":"wird aufgenommen ({n})","tt.click_record":"Klicken zum Aufnehmen","tt.skip":"Diese Aufnahme auslassen",
       "qr.movie":"Film","qr.series":"Serie","qr.rec_movie":"Film aufnehmen","qr.movie_note":"Wird als Film in Plex Movies-Library importiert",
       "qr.this_episode":"Nur diese Folge","qr.once_note":"Einmalige Aufnahme dieser einen Folge",
@@ -3672,6 +3684,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     display_name = ch_name or ch_id
                     result.append({"channel_id":ch_id,"channel_name":display_name,
                                    "logo":ch.get("logo",""),"events":events_out})
+                else:
+                    # Sender ohne EPG-Daten (z.B. gerade neu hinzugefügt) trotzdem
+                    # anzeigen, damit er im Plan sichtbar ist.
+                    display_name = ch_name or ch_id
+                    result.append({"channel_id":ch_id,"channel_name":display_name,
+                                   "logo":ch.get("logo",""),"events":[],"no_epg":True})
             _json(self, result); return
 
         if path == "/api/tmdb/search":
